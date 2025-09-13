@@ -1,12 +1,12 @@
 # Langchain Chatbot
 
-Chatbot en progreso para **RAG y QA sobre documentos** usando **LangChain y LangGraph ** y un front **Gradio** para probar rápidamente en el navegador.
+Chatbot en progreso para **Retrieval Augmented Generation (RAG) y preguntas y respuestas sobre documentos** usando **LangChain y LangGraph ** y un frontend con **Gradio** para probar rápidamente.
 
 > **Objetivo:** permitir que un usuario cargue un documento, se indexe en un vector store y hacer preguntas al LLM con recuperación de pasajes relevantes.
 
 ---
 
-## 🚀 Demo rápida
+## Demo rápida
 
 1. Clonar
 ```bash
@@ -39,3 +39,36 @@ uv run python main.py
 # o
 python main.py
 ```
+
+## Funcionamiento
+
+1. Carga de documento → El usuario sube un archivo.
+
+2. Particionado (chunking) → El documento se divide en fragmentos
+
+3. Generación de embeddings → Cada fragmento se transforma en un vector numérico.
+
+4. Almacenamiento en Vector Store → Los vectores se indexan para búsquedas eficientes.
+
+5. Consulta del usuario → El usuario realiza una pregunta.
+
+6. Recuperación de pasajes relevantes → Se buscan los fragmentos más útiles en el Vector Store.
+
+7. Respuesta con LLM → El modelo LLM responde usando los fragmentos recuperados como contexto.
+
+## Modelos actuales
+
+Actualmente se utilizan los siguientes modelos:
+
+- **Modelo de embeddings:**
+  - `embeddinggemma:300m`
+  - Se ejecuta de forma local utilizando Ollama.
+  - Convierte los fragmentos de texto en vectores numéricos para la búsqueda semántica en el vector store.
+
+- **Modelo de chat (LLM):**
+  - `llama-3.1-8b-instant`
+  - Se utiliza a través de [Groq](https://groq.com/).
+  - Se encarga de generar respuestas a las preguntas del usuario usando los fragmentos relevantes recuperados del documento.
+
+
+Estos modelos se pueden cambiar editando las variables `CHAT_MODEL` y `EMBED_MODEL` en tu entorno.
