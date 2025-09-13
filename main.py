@@ -1,3 +1,5 @@
+import os
+
 from dotenv import load_dotenv
 from langchain.chat_models import init_chat_model
 from langchain_ollama import OllamaEmbeddings
@@ -14,16 +16,17 @@ from langchain_qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
 import gradio as gr
 
-HOST_IP = "172.17.32.1"
-OLLAMA_BASE_URL = f"http://{HOST_IP}:11434"
-CHAT_MODEL = "llama-3.1-8b-instant"
-EMBED_MODEL = "embeddinggemma:300m"
-
-
-
-
 load_dotenv()
-_embeddings = OllamaEmbeddings(model=EMBED_MODEL, base_url=f"http://{HOST_IP}:11434")
+
+HOST_IP = os.getenv("HOST_IP")
+OLLAMA_BASE_URL = f"http://{HOST_IP}:11434"
+CHAT_MODEL = os.getenv("CHAT_MODEL")
+EMBED_MODEL = os.getenv("EMBED_MODEL")
+
+if not CHAT_MODEL or not EMBED_MODEL:
+    raise ValueError("CHAT_MODEL and EMBED_MODEL must be set in .env file")
+
+_embeddings = OllamaEmbeddings(model=EMBED_MODEL, base_url=OLLAMA_BASE_URL)
 
 vector_size = len(_embeddings.embed_query("sample text"))
 client = QdrantClient(":memory:")
@@ -37,7 +40,6 @@ _vector_store = QdrantVectorStore(
     collection_name="test",
     embedding=_embeddings,
 )
-
 
 
 def load_and_split_text():
@@ -54,7 +56,7 @@ _llm = init_chat_model(model=CHAT_MODEL, model_provider="groq")
 # _llm = init_chat_model(
 #    "llama3.1:8b-instruct-q4_K_M",
 #    model_provider="ollama",
-#    base_url=f"http://{HOST_IP}:11434",
+#    base_url=OLLAMA_BASE_URL,
 # )
 
 
@@ -70,7 +72,7 @@ def retrieve(query: str, k: int = 4):
     return serialized, retrieved_docs
 
 
-# Generate an  that may include a tool-call to be sent.
+# Generate a response that may include a tool-call to be sent.
 def query_or_respond(state: MessagesState):
     """Generate tool call for retrieval or respond."""
     llm_with_tools = _llm.bind_tools([retrieve])
@@ -134,8 +136,11 @@ def compile_graph():
 
     return graph_builder.compile(checkpointer=memory)
 
+
 load_and_split_text()
 _graph = compile_graph()
+
+
 def _history_to_messages(history, user_msg):
     msgs = []
     for u, a in history:
@@ -146,6 +151,7 @@ def _history_to_messages(history, user_msg):
     msgs.append(HumanMessage(content=user_msg))
     return msgs
 
+
 def chat_fn(user_message, history):
     """
     Called by gr.ChatInterface.
@@ -154,21 +160,23 @@ def chat_fn(user_message, history):
     """
     # 1) turn chat into MessagesState
     msgs = _history_to_messages(history, user_message)
-    result = _graph.invoke({"messages": msgs}, config={"configurable": {"thread_id": "thread1"}})
+    result = _graph.invoke(
+        {"messages": msgs}, config={"configurable": {"thread_id": "thread1"}}
+    )
     ai_messages = result.get("messages", [])
     answer = ""
     if ai_messages:
         answer = getattr(ai_messages[-1], "content", "") or str(ai_messages[-1])
     return answer
 
+
 with gr.Blocks(title="Chat Demo") as demo:
     chatbot = gr.Chatbot(height=420, show_copy_button=True)
     chat = gr.ChatInterface(
         fn=chat_fn,
         chatbot=chatbot,
-        textbox=gr.Textbox(placeholder="Ask something about the PDF…")
+        textbox=gr.Textbox(placeholder="Ask something about the PDF…"),
     )
 
 if __name__ == "__main__":
     demo.launch()
-
