@@ -22,7 +22,7 @@ docs/
 
 # Jupyter Notebook
 .ipynb_checkpoints/
-main.ipynb
+*.ipynb
 
 chroma_db/
 

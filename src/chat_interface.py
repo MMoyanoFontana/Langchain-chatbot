@@ -15,7 +15,8 @@ def history_to_messages(history, user_msg):
 
 
 def create_chat_interface(graph):
-    """Create a Gradio chat interface with a sidebar for conversations and a button to create new ones."""
+    """Create a Gradio chat interface with a sidebar for conversations 
+    and a button to create new ones."""
     conversations = {"Chat 1": []}
     selected_conversation = "Default"
 
