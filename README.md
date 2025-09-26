@@ -25,22 +25,31 @@ uv sync
 # crear venv y actívarlo, luego:
 pip install -r requirements.txt
 ```
-3. Definir variables de entorno
+3. Definir en el config.yaml los modelos a utilizar. Ejemplo:
+```yaml
+EMBED_MODEL: "openai:text-embedding-3-large"
+CHAT_MODEL: "openai:gpt-4o-mini"
+DATA_PATH: "test_data/ICA2609_ExamplesKE(2).pdf"
+CHROMA_PATH: "chroma_db"
+LANGSMITH_TRACING: True
+LANGSMITH_PROJECT: "pr-formal-replacement-44"
+LANGSMITH_ENDPOINT: "https://api.smith.langchain.com"
+TEMPERATURE: 0.2
+``` 
+4. Definir como variables variables de entorno las key necesarias
 ```bash
-#   ejemplo en Linux/macOS:
-export HOST_IP=172.17.32.1
-export OLLAMA_BASE_URL="http://$HOST_IP:11434"
-export CHAT_MODEL="llama-3.1-8b-instant"
-export EMBED_MODEL="embeddinggemma:300m"
+#   ejemplo:
+OPENAI_API_KEY=
+LANGSMITH_API_KEY=
 ```
-4. Ejecuta
+4. Ejecutar
 ```bash
-uv run python main.py
-# o
+uv run python -m src.main 
+o
 python main.py
 ```
 
-## Funcionamiento
+## Funcionamiento 
 
 1. Carga de documento → El usuario sube un archivo.
 
@@ -61,14 +70,12 @@ python main.py
 Actualmente se utilizan los siguientes modelos:
 
 - **Modelo de embeddings:**
-  - `embeddinggemma:300m`
-  - Se ejecuta de forma local utilizando Ollama.
+  - `openai:text-embedding-3-large`
   - Convierte los fragmentos de texto en vectores numéricos para la búsqueda semántica en el vector store.
 
 - **Modelo de chat (LLM):**
-  - `llama-3.1-8b-instant`
-  - Se utiliza a través de [Groq](https://groq.com/).
+  - `openai:gpt-4o-mini`
   - Se encarga de generar respuestas a las preguntas del usuario usando los fragmentos relevantes recuperados del documento.
 
 
-Estos modelos se pueden cambiar editando las variables `CHAT_MODEL` y `EMBED_MODEL` en tu entorno.
+Estos se pueden cambiar  modificando el archivo config.yaml con el formato `proveedor:modelo`
