@@ -6,6 +6,7 @@ from langchain.retrievers import ParentDocumentRetriever
 from langchain.storage import InMemoryStore
 from langchain.schema import Document
 
+
 def build_parent_child_retriever(
     pdf_path,
     embedding_fn,
@@ -35,7 +36,7 @@ def build_parent_child_retriever(
     )
 
     # Vectorstore persistente para almacenar los chunks hijos
-    # Store en memoria para los padres 
+    # Store en memoria para los padres
     vectorstore = Chroma(
         collection_name=collection_name,
         embedding_function=embedding_fn,

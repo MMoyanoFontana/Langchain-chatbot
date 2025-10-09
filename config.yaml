@@ -1,5 +1,5 @@
 EMBED_MODEL: "openai:text-embedding-3-large"
 CHAT_MODEL: "openai:gpt-4o"
-DATA_PATH: "test_data/ICA2609_ExamplesKE(2).pdf"
+DATA_PATH: "test_data/ICA2609_ExamplesKE.pdf"
 CHROMA_PATH: "chroma_db"
 TEMPERATURE: 0.2
