@@ -10,8 +10,8 @@ from langchain.schema import Document
 def build_parent_child_retriever(
     pdf_path,
     embedding_fn,
-    persist_dir="chroma_ke_pdf_parent_child_v2",
-    collection_name="parent_child_children_v2",
+    persist_dir="checkpoints",
+    collection_name="parent_child_collection",
     child_chunk_size=200,
     child_chunk_overlap=60,
     parent_chunk_size=4000,
@@ -19,6 +19,30 @@ def build_parent_child_retriever(
     parent_separators=["\n## ", "\n# ", "\n\n", "\n", ". "],
     search_kwargs={"k": 4},
 ):
+    if not pdf_path:
+        vectorstore = Chroma(
+            collection_name=collection_name,
+            embedding_function=embedding_fn,
+            persist_directory=persist_dir,
+        )
+        store = InMemoryStore()
+
+        retriever = ParentDocumentRetriever(
+            vectorstore=vectorstore,
+            docstore=store,
+            child_splitter=RecursiveCharacterTextSplitter(
+                chunk_size=child_chunk_size,
+                chunk_overlap=child_chunk_overlap,
+            ),
+            parent_splitter=RecursiveCharacterTextSplitter(
+                chunk_size=parent_chunk_size,
+                chunk_overlap=parent_chunk_overlap,
+                separators=parent_separators,
+            ),
+            search_kwargs=search_kwargs,
+        )
+        return retriever
+
     # Load and unify pages
     loader = PyMuPDFLoader(pdf_path)
     page_docs = loader.load()

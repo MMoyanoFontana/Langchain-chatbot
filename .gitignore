@@ -24,7 +24,9 @@ docs/
 .ipynb_checkpoints/
 *.ipynb
 
+# Persistent storage
 chroma_db/
 *.bin
 *.sqlite3
-
+*.db*
+checkpoints/

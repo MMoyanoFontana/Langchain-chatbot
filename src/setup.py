@@ -13,7 +13,6 @@ with open(os.path.join(os.path.dirname(__file__), "../config.yaml"), "r") as f:
 
 CHAT_MODEL = config.get("CHAT_MODEL")
 EMBED_MODEL = config.get("EMBED_MODEL")
-DATA_PATH = config.get("DATA_PATH", "test_data/ICA2609_ExamplesKE(2).pdf")
 LANGSMITH_TRACING = config.get("LANGSMITH_TRACING", True)
 LANGSMITH_PROJECT = config.get("LANGSMITH_PROJECT", "pr-formal-replacement-44")
 LANGSMITH_ENDPOINT = config.get("LANGSMITH_ENDPOINT", "https://api.smith.langchain.com")
@@ -32,6 +31,6 @@ _llm = init_chat_model(CHAT_MODEL, temperature=TEMPERATURE)
 
 # Inicializar el retriever
 _retriever = build_parent_child_retriever(
-    pdf_path=DATA_PATH,
+    pdf_path=None,
     embedding_fn=_embeddings,
 )

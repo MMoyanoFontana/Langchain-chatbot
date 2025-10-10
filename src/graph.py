@@ -1,25 +1,25 @@
 from langgraph.graph import MessagesState, StateGraph, END
 from langgraph.prebuilt import ToolNode, tools_condition
-from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.sqlite import SqliteSaver
 from nodes import retrieve, query_or_respond, generate
+import sqlite3
 
 
 def compile_graph():
-    graph_builder = StateGraph(MessagesState)
+    g = StateGraph(MessagesState)
     tools = ToolNode([retrieve])
-    graph_builder.add_node(query_or_respond)
-    graph_builder.add_node(tools)
-    graph_builder.add_node(generate)
 
-    graph_builder.set_entry_point("query_or_respond")
-    graph_builder.add_conditional_edges(
-        "query_or_respond",
-        tools_condition,
-        {END: END, "tools": "tools"},
+    g.add_node(query_or_respond)
+    g.add_node(tools)
+    g.add_node(generate)
+
+    g.set_entry_point("query_or_respond")
+    g.add_conditional_edges(
+        "query_or_respond", tools_condition, {END: END, "tools": "tools"}
     )
-    graph_builder.add_edge("tools", "generate")
-    graph_builder.add_edge("generate", END)
+    g.add_edge("tools", "generate")
+    g.add_edge("generate", END)
 
-    memory = MemorySaver()
-
-    return graph_builder.compile(checkpointer=memory)
+    conn = sqlite3.connect("chatbot_data.db", check_same_thread=False)
+    checkpointer = SqliteSaver(conn)
+    return g.compile(checkpointer=checkpointer)

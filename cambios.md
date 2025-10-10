@@ -74,6 +74,12 @@ El documento original de prueba se sigue cargando por defecto, para hacerlo mas 
 
 Me gustaría agregar una manera de ver los documentos cargados y poder eliminarlos 
 
-## En progreso: Persistir chat y documentos cargados, distintos chats.
+# Reunión 10/10/2025 
 
-Empece a hacer que los docs subidos, el historial de chats, etc. se persista y poder crear distintos chats, con id y thread unicos, para mantener conversaciones separadas.
+# Persistencia de chats
+
+Ya funciona la persistencia de archivos, el usuario los sube, se crean los embeddings y quedan persistidos
+Lo mismo con el historico de chats, se maneja todo a través del State del grafo de LangGrapgh, que guarda usando el thread_id
+En progreso: Gradio me da la posibilidad de eliminar mensajes en la interfaz, hacer que eso se conecte con los checkpoints
+Manejo de diferentes chats
+Ver tema login para deploy, gradio tiene una opcion pero hay que usar HuggingFace

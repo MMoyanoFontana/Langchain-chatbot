@@ -1,14 +1,16 @@
 import gradio as gr
 from gradio.themes import Base
 from pathlib import Path
-from langchain.schema import AIMessage, HumanMessage, Document
+from langchain.schema import HumanMessage, Document
 from langchain_community.document_loaders import PyMuPDFLoader
+from langchain_core.runnables import RunnableConfig
 from graph import compile_graph
 import os
 from setup import _retriever
 
-_graph = compile_graph()
 
+app = compile_graph()
+checkpointer = app.checkpointer
 
 def _to_text(x):
     # Transforma lista de paths a texto, si no rompe al llamar a OpenAI
@@ -19,23 +21,21 @@ def _to_text(x):
         )
     return "" if x is None else str(x)
 
-
-def _history_to_messages(history, user_msg):
-    msgs = []
-    for u, a in history:
-        if u:
-            msgs.append(HumanMessage(content=_to_text(u)))
-        if a:
-            msgs.append(AIMessage(content=_to_text(a)))
-    msgs.append(HumanMessage(content=_to_text(user_msg)))
-    return msgs
+def _to_history(message)-> dict[str, str]:
+    return {"role": "user" if isinstance(message, HumanMessage) else "assistant", "content": str(message.content)}
 
 
-def chat_fn(message_dict, history):
+def load_persisted_chat_history(config: RunnableConfig) -> list[dict[str, str]]:
+    snap = app.get_state(config)                           
+    msgs = snap.values.get("messages", [])
+    return [_to_history(m) for m in msgs]
+
+def chat_fn(message_dict, history, config):
     """
     Called by gr.ChatInterface.
     - message_dict: dict with 'text' and 'file'
-    - history: list of [user, assistant]
+    - history: list of [user, assistant], messages in the chat
+    - config: RunnableConfig with 'thread_id'
     """
     # 1) turn chat into MessagesState
     user_message = message_dict["text"]
@@ -69,18 +69,24 @@ def chat_fn(message_dict, history):
                 )
     if not user_message.strip():
         return "\n\n".join(respuestas)
-    msgs = _history_to_messages(history, user_message)
-    result = _graph.invoke(
-        {"messages": msgs}, config={"configurable": {"thread_id": "thread1"}}
-    )
+    result = app.invoke({"messages": [HumanMessage(content=_to_text(user_message))]}, config)
+
     ai_messages = result.get("messages", [])
     answer = ""
     if ai_messages:
         answer = getattr(ai_messages[-1], "content", "") or str(ai_messages[-1])
+
+    # Esto es para que se vea en la interfaz
+    history = history + [(user_message, answer)]
     return answer
 
 
 def create_chat_interface():
+    # Load persisted chat history
+    thread_id = "thread2"
+    config = RunnableConfig({"configurable": {"thread_id": thread_id}})  # stable per chat/thread
+    chat_history = load_persisted_chat_history(config)
+
     with gr.Blocks(
         title="Demo de RAG para Chatbot",
         theme=Base(),
@@ -96,15 +102,19 @@ def create_chat_interface():
                 gr.Button("Chat 3")
 
             with gr.Column():
+                chatbot = gr.Chatbot(
+                    chat_history,
+                    type="messages",
+                    height=720,
+                    label=None,
+                    show_label=False,
+                    container=False,
+                )
                 gr.ChatInterface(
                     chat_fn,
                     multimodal=True,
-                    chatbot=gr.Chatbot(
-                        height=720,
-                        label=None,
-                        show_label=False,
-                        container=False,
-                    ),
+                    type="messages",
+                    chatbot=chatbot,
                     textbox=gr.MultimodalTextbox(
                         placeholder="Haz una consulta o sube un documento...",
                         sources=["microphone", "upload"],
@@ -113,5 +123,15 @@ def create_chat_interface():
                         stop_btn=True,
                         elem_id="chat-input",
                     ),
+                    additional_inputs=gr.State(
+                        config
+                    ),  # Los inputs adicionales a chat_fn tienen que ser gr.State u otro componente de gradio
                 )
+
+        # Sin esto los mensajes enviados desde el último inicio desparecen al recargar la página
+        # hasta que se reinicia el servidor
+        def _reload(config):
+            return load_persisted_chat_history(config)
+
+        demo.load(_reload, inputs=gr.State(config), outputs=chatbot)
     return demo
