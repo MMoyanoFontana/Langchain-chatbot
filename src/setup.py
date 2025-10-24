@@ -11,6 +11,7 @@ load_dotenv()
 with open(os.path.join(os.path.dirname(__file__), "../config.yaml"), "r") as f:
     config = yaml.safe_load(f)
 
+DATA_PATH = config.get("DATA_PATH")
 CHAT_MODEL = config.get("CHAT_MODEL")
 EMBED_MODEL = config.get("EMBED_MODEL")
 LANGSMITH_TRACING = config.get("LANGSMITH_TRACING", True)

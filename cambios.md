@@ -83,3 +83,8 @@ Lo mismo con el historico de chats, se maneja todo a través del State del grafo
 En progreso: Gradio me da la posibilidad de eliminar mensajes en la interfaz, hacer que eso se conecte con los checkpoints
 Manejo de diferentes chats
 Ver tema login para deploy, gradio tiene una opcion pero hay que usar HuggingFace
+
+# Reunión 24/10/2025
+
+Ya hay una funcionalidad de Login, con eso se diferencia a los distintos usuarios. 
+Cada usuario solo puede acceder a sus chats y el bot solo responde con archivos

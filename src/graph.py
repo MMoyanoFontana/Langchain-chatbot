@@ -20,6 +20,6 @@ def compile_graph():
     g.add_edge("tools", "generate")
     g.add_edge("generate", END)
 
-    conn = sqlite3.connect("chatbot_data.db", check_same_thread=False)
+    conn = sqlite3.connect("chat_bot.db", check_same_thread=False)
     checkpointer = SqliteSaver(conn)
     return g.compile(checkpointer=checkpointer)
