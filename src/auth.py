@@ -13,6 +13,7 @@ def _conn() -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     return conn
 
+
 def verify(username: str, password: str) -> Tuple[bool, str]:
     with _conn() as c:
         row = c.execute(

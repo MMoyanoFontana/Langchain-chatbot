@@ -15,4 +15,5 @@ dependencies = [
     "langchain-openai>=0.3.33",
     "pymupdf>=1.26.4",
     "dotenv>=0.9.9",
+    "langchain-text-splitters>=1.0.0",
 ]

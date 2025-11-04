@@ -88,3 +88,18 @@ Ver tema login para deploy, gradio tiene una opcion pero hay que usar HuggingFac
 
 Ya hay una funcionalidad de Login, con eso se diferencia a los distintos usuarios. 
 Cada usuario solo puede acceder a sus chats y el bot solo responde con archivos
+Ahora que el front está mas usable, me gustaría agregar 
+- mejoras al chat:
+    - Diferentes roles, no solo pregutnas y respuestas, poder analizar y mejorar documentos
+    - Capacidad para más tipos de archivos
+    - Mejorar el tema de memoria y checkpoints, por ahora no limita la cantidad asi que si mando muchos mensajes se va acumulando y tiende a volverse medio loco o pesar mucho 
+    - Busqueda semántica
+- el text-to-speech, 
+-Logo Gemis, Gemis.Ba
+
+
+
+Logo en el chat
+Memorias de usuario
+Cerrar sesión
+Mejoras en los colores

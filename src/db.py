@@ -1,6 +1,5 @@
 # src/storage.py
 # Persist only users, chats (with unique thread_id), and files. No messages table.
-from datetime import datetime
 from getpass import getpass
 import uuid
 import bcrypt
@@ -38,10 +37,11 @@ CREATE TABLE IF NOT EXISTS chats (
 
 CREATE TABLE IF NOT EXISTS messages (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  content TEXT NOT NULL,
   role TEXT NOT NULL,
-  type TEXT NOT NULL,
+  type TEXT,
   chat_id INTEGER NOT NULL,
-  thread_id TEXT UNIQUE NOT NULL,
+  thread_id TEXT NOT NULL,
   created_at REAL NOT NULL DEFAULT (strftime('%s','now')),
   updated_at REAL NOT NULL DEFAULT (strftime('%s','now')),
   FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE
@@ -54,11 +54,12 @@ CREATE TABLE IF NOT EXISTS files (
   chat_id INTEGER NOT NULL,
   original_name TEXT NOT NULL,
   stored_path TEXT NOT NULL,
-  sha256 TEXT UNIQUE,
+  sha256 TEXT,
   created_at REAL NOT NULL DEFAULT (strftime('%s','now')),
   meta TEXT,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-  FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE
+  FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE,
+  UNIQUE(sha256, chat_id, user_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
@@ -96,12 +97,23 @@ def get_user_id(username: str) -> Optional[int]:
         return int(r["id"]) if r else None
 
 
+def list_users() -> list[dict]:
+    with _conn() as c:
+        return [
+            dict(r)
+            for r in c.execute(
+                "SELECT id, username, hash_password, created_at FROM users ORDER BY created_at DESC"
+            ).fetchall()
+        ]
+
+
 def list_chats(user_id: int) -> list[dict]:
     q = """SELECT id, title, thread_id, created_at, updated_at 
            FROM chats WHERE user_id=? ORDER BY updated_at DESC"""
     with _conn() as c:
         return [dict(r) for r in c.execute(q, (user_id,)).fetchall()]
-    
+
+
 def get_chat_by_id(id: int) -> Optional[dict]:
     with _conn() as c:
         r = c.execute("SELECT * FROM chats WHERE id=?", (id,)).fetchone()
@@ -113,10 +125,12 @@ def get_chat_by_thread(thread_id: str) -> Optional[dict]:
         r = c.execute("SELECT * FROM chats WHERE thread_id=?", (thread_id,)).fetchone()
         return dict(r) if r else None
 
+
 def get_chat_id_by_thread(thread_id: str) -> Optional[int]:
     with _conn() as c:
         r = c.execute("SELECT id FROM chats WHERE thread_id=?", (thread_id,)).fetchone()
         return r["id"] if r else None
+
 
 def get_last_thread_id_for_user(user_id: int) -> Optional[str]:
     with _conn() as c:
@@ -148,7 +162,37 @@ def rename_chat(thread_id: int, title: str) -> None:
 
 def touch_chat(thread_id: int) -> None:
     with _conn() as c:
-        c.execute("UPDATE chats SET updated_at=? WHERE thread_id=?", (time.time(), thread_id))
+        c.execute(
+            "UPDATE chats SET updated_at=? WHERE thread_id=?", (time.time(), thread_id)
+        )
+
+
+def delete_chat_by_thread(thread_id: str) -> None:
+    with _conn() as c:
+        c.execute("DELETE FROM chats WHERE thread_id=?", (thread_id,))
+
+
+# Messages
+def persist_message(
+    content: str, role: str, type: str, chat_id: int, thread_id: str
+) -> int:
+    with _conn() as c:
+        cur = c.execute(
+            "INSERT INTO messages(content, role, type, chat_id, thread_id) "
+            "VALUES (?,?,?,?,?)",
+            (content, role, type, chat_id, thread_id),
+        )
+        return int(cur.lastrowid)
+
+
+def load_chat_messages(chat_id: int) -> list[dict]:
+    with _conn() as c:
+        r = c.execute(
+            """SELECT content, role, type, chat_id, thread_id, created_at 
+            FROM messages WHERE chat_id=? ORDER BY created_at ASC""",
+            (chat_id,),
+        ).fetchall()
+        return [dict(row) for row in r]
 
 
 # ---- Files ----
@@ -162,7 +206,9 @@ def _sha256(path: Path) -> str:
 
 def get_sha(id: int) -> str:
     with _conn() as c:
-        return c.execute("SELECT sha256 FROM files WHERE id=?", (id,)).fetchone()["sha256"]
+        return c.execute("SELECT sha256 FROM files WHERE id=?", (id,)).fetchone()[
+            "sha256"
+        ]
 
 
 def add_file(
@@ -192,11 +238,13 @@ def add_file(
         )
         return int(cur.lastrowid)
 
+
 def get_files_by_chat_id(chat_id: int) -> list[dict]:
     q = """SELECT id, original_name, stored_path, created_at, meta 
             FROM files WHERE chat_id=? ORDER BY created_at DESC"""
     with _conn() as c:
         return [dict(r) for r in c.execute(q, (chat_id,)).fetchall()]
+
 
 # CLI
 if __name__ == "__main__":
@@ -221,6 +269,18 @@ if __name__ == "__main__":
             sys.exit(1)
         uid = create_user(u, p)
         print(f"Usuario creado id={uid}")
-    else:
-        print("Comando no reconocido.")
-        sys.exit(1)
+    elif cmd == "drop":
+        with _conn() as c:
+            id = sys.argv[2]
+            c.execute("DELETE FROM messages where id = ?", (id,))
+    elif cmd == "edit":
+        with _conn() as c:
+            id = sys.argv[2]
+            new_content = sys.argv[3]
+            c.execute("UPDATE messages SET content = ? WHERE id = ?", (new_content, id))
+    elif cmd == "list":
+        users = list_users()
+        print("Usuarios:")
+        for user in users:
+            print(f" - {user['username']} (id={user['id']})")
+        sys.exit(0)
