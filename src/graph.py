@@ -15,10 +15,10 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 from langchain_openai import OpenAIEmbeddings
 from langchain.chat_models import init_chat_model
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain.storage import LocalFileStore
+from langchain_classic.storage import LocalFileStore
 from langgraph.graph import MessagesState, StateGraph, START, END
-from langchain.retrievers import ParentDocumentRetriever
-from langchain.storage._lc_store import create_kv_docstore
+from langchain_classic.retrievers import ParentDocumentRetriever
+from langchain_classic.storage import create_kv_docstore
 from langgraph.prebuilt import ToolNode, tools_condition
 from langchain_core.runnables import RunnableConfig
 from pydantic import BaseModel, Field

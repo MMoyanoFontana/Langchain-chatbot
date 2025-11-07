@@ -1,9 +1,0 @@
-gradio>=5.45.0
-langchain[groq]>=0.3.27
-langchain-community>=0.3.29
-langchain-ollama>=0.3.8
-lark>=1.2.2
-ollama>=0.5.3
-pypdf>=6.0.0
-langgraph>=0.6.7
-langchain-qdrant>=0.2.1

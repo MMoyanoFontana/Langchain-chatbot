@@ -33,3 +33,4 @@ checkpoints/
 parent/
 assets/
 chroma_multi/
+.gradio/

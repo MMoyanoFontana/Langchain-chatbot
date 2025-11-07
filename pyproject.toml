@@ -11,9 +11,12 @@ dependencies = [
     "lark>=1.2.2",
     "pypdf>=6.0.0",
     "langchain-chroma>=0.2.6",
-    "langgraph>=0.6.7",
+    "langgraph>=1.0",
     "langchain-openai>=0.3.33",
     "pymupdf>=1.26.4",
     "dotenv>=0.9.9",
     "langchain-text-splitters>=1.0.0",
+    "langchain>=1.0.3",
+    "langchain-classic>=1.0.0",
+    "langgraph-checkpoint-sqlite>=3.0.0",
 ]
