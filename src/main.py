@@ -1,5 +1,4 @@
 import gradio as gr
-import pandas as pd
 import time
 import os
 import shutil
@@ -20,8 +19,10 @@ from db import (
     delete_chat_by_thread,
     persist_message,
     load_chat_messages,
+    rename_chat,
 )
 from auth import verify
+from title_setter import _generate_title_openai
 from graph import graph, retriever
 from gradio import ChatMessage
 from stytle import gemis_theme, custom_css
@@ -46,6 +47,22 @@ def _to_history(message) -> ChatMessage | None:
     return None
 
 
+def _reload_chats(uid: int):
+    """Reload user's chat list."""
+    threads = list_chats(uid)
+    if len(threads) == 0:
+        chat_id = create_chat(uid, "Chat 1")
+        tid = get_chat_by_id(chat_id).get("thread_id")
+        choices = [("Chat 1", tid)]
+    else:
+        tid = threads[0].get("thread_id")
+        choices = [
+            (f"{t.get('title', 'Sin título')}", t.get("thread_id")) for t in threads
+        ]
+        choices = choices
+    return gr.update(choices=choices, value=tid)
+
+
 def _reload(user: dict):
     """Reload user session and chat history."""
     if user is None or user.get("username") is None or user.get("ttl", 0) < time.time():
@@ -66,7 +83,7 @@ def _reload(user: dict):
             choices = [
                 (f"{t.get('title', 'Sin título')}", t.get("thread_id")) for t in threads
             ]
-            choices = sorted(choices, key=lambda x: x[0])
+            choices = choices
 
         cfg = RunnableConfig({"configurable": {"thread_id": tid, "user_id": uid}})
         hist = load_persisted_chat_history(cfg)
@@ -99,7 +116,6 @@ def _new_chat(user_id):
         tid = get_chat_by_id(id).get("thread_id")
 
         new_choices = [(title, tid)] + dd_choices
-        new_choices = sorted(new_choices, key=lambda x: x[0])
 
         return (
             [],
@@ -127,9 +143,7 @@ def _delete_chat(user_id, thread_id):
             return (
                 [],
                 new_tid,
-                gr.update(
-                    choices=sorted(new_choices, key=lambda x: x[0]), value=new_tid
-                ),
+                gr.update(choices=new_choices, value=new_tid),
                 gr.update(value=[]),
             )
         else:
@@ -231,7 +245,6 @@ def bot(history, message, thread_id, user_id):
         config = RunnableConfig(
             {"configurable": {"thread_id": thread_id, "user_id": user_id}}
         )
-
         user_message = message["text"] or ""
         uploaded_files = []
 
@@ -290,16 +303,28 @@ def bot(history, message, thread_id, user_id):
                         ]
                         retriever.add_documents(docs)
                         uploaded_files.append(safe_filename)
-                        gr.Info(f"Archivo '{safe_filename}' subido correctamente.")
 
                 except Exception as e:
                     print(f"Error processing PDF {path}: {e}")
                     gr.Warning(f"Error al procesar {Path(path).name}")
 
+        should_generate_title = (len(history) == 1 or len(history) == 2) and (
+            user_message.strip() != "" or uploaded_files
+        )
         # Handle file-only uploads
         if uploaded_files and user_message.strip() == "":
+            if should_generate_title:
+                title = _generate_title_openai(f"files: {uploaded_files}")
+                rename_chat(thread_id, title)
             response = "Tus archivos han sido subidos correctamente. ¿En qué puedo ayudarte con ellos?"
             history = history + [{"role": "assistant", "content": response}]
+            persist_message(
+                content=response,
+                role="assistant",
+                type="text",
+                chat_id=get_chat_id_by_thread(thread_id),
+                thread_id=thread_id,
+            )
             return history, get_files(thread_id)
 
         # Get bot response
@@ -330,6 +355,10 @@ def bot(history, message, thread_id, user_id):
                 chat_id=get_chat_id_by_thread(thread_id),
                 thread_id=thread_id,
             )
+
+            if should_generate_title:
+                title = _generate_title_openai(user_message)
+                rename_chat(thread_id, title)
 
         return history, get_files(thread_id)
 
@@ -554,6 +583,10 @@ with gr.Blocks(title="Chatbot GEMIS", theme=gemis_theme, css=custom_css) as demo
             lambda: gr.MultimodalTextbox(interactive=True),
             None,
             [multimodal],
+        ).then(
+            _reload_chats,
+            inputs=[user_id],
+            outputs=[chat_selector],
         )
 
         new_btn.click(
