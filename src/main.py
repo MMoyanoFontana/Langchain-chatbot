@@ -25,7 +25,7 @@ from auth import verify
 from title_setter import _generate_title_openai
 from graph import graph, retriever
 from gradio import ChatMessage
-from stytle import gemis_theme, custom_css
+from style import gemis_theme, custom_css
 
 # Constants
 MAX_FILE_SIZE_MB = 10

@@ -1,11 +1,13 @@
 # Multi-user Chroma (Option A): single collection + per-user/per-thread filters
 # - Persistent vector store (no ingestion here)
 # - Tool enforces {user_id, thread_id} from server context (not user input)
+# - Sistema de memorias de usuario
 # - Plug-and-play with your existing LangGraph workflow
 
 import sqlite3
 import dotenv
-from typing import List, Literal
+import json
+from typing import List, Literal, Dict, Any
 
 from langchain_core.tools import tool
 from langchain_core.documents import Document
@@ -29,6 +31,7 @@ PERSIST_DIR = "./chroma_multi"
 _embeddings = OpenAIEmbeddings()
 RESPONSE_MODEL = init_chat_model("openai:gpt-4o", temperature=0)
 GRADER_MODEL = init_chat_model("openai:gpt-4o", temperature=0)
+MEMORY_MODEL = init_chat_model("openai:gpt-4o", temperature=0)
 COLLECTION_NAME = "child_store"
 vs = Chroma(
     embedding_function=_embeddings,
@@ -48,6 +51,135 @@ retriever = ParentDocumentRetriever(
     parent_splitter=parent_splitter,
 )
 
+# -----------------------------
+# Sistema de Memorias de Usuario
+# ----------------------------
+
+# Inicializar base de datos de memorias
+def init_memory_db():
+    """Inicializa la base de datos SQLite para memorias de usuario."""
+    conn = sqlite3.connect("user_memories.db", check_same_thread=False)
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS user_memories (
+            user_id INTEGER,
+            memory_key TEXT,
+            memory_value TEXT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (user_id, memory_key)
+        )
+    """)
+    conn.commit()
+    return conn
+
+
+memory_conn = init_memory_db()
+
+
+class Memory(BaseModel):
+    """Una memoria individual del usuario."""
+
+    key: str = Field(
+        description="Clave descriptiva de la memoria (ej: 'nombre', 'equipo_favorito', 'profesion')"
+    )
+    value: str = Field(description="Valor de la memoria")
+
+
+class UserMemory(BaseModel):
+    """Estructura para extraer memorias del usuario."""
+
+    has_memories: bool = Field(
+        description="True si se encontraron memorias personales en el mensaje, False si no."
+    )
+    memories: List[Memory] = Field(
+        default_factory=list,
+        description="Lista de memorias extraídas. Vacía si has_memories es False.",
+    )
+
+
+MEMORY_EXTRACTION_PROMPT = """Analiza el siguiente mensaje del usuario y extrae información personal relevante que deba recordarse.
+
+Mensaje del usuario: {message}
+
+Extrae información como:
+- Nombre
+- Preferencias (equipos deportivos, comidas, hobbies)
+- Profesión u ocupación
+- Información familiar
+- Ubicación
+- Cualquier dato personal relevante que el usuario comparta
+
+Si el mensaje NO contiene información personal que deba recordarse, marca has_memories como False y deja memories vacía.
+Si SÍ contiene información personal, extrae las memorias con claves descriptivas en español.
+
+Ejemplos:
+- "Me llamo Juan" → key: "nombre", value: "Juan"
+- "Me gusta Boca" → key: "equipo_favorito", value: "Boca"
+- "Soy ingeniero y vivo en Buenos Aires" → [key: "profesion", value: "ingeniero"], [key: "ciudad", value: "Buenos Aires"]
+"""
+
+
+def extract_and_save_memories(message: str, user_id: int):
+    """Extrae memorias del mensaje del usuario y las guarda en la base de datos."""
+    prompt = MEMORY_EXTRACTION_PROMPT.format(message=message)
+
+    response = MEMORY_MODEL.with_structured_output(UserMemory).invoke(
+        [{"role": "user", "content": prompt}]
+    )
+
+    if response.has_memories and response.memories:
+        cursor = memory_conn.cursor()
+        saved_memories = {}
+        for memory in response.memories:
+            cursor.execute(
+                """
+                INSERT OR REPLACE INTO user_memories (user_id, memory_key, memory_value)
+                VALUES (?, ?, ?)
+            """,
+                (user_id, memory.key, memory.value),
+            )
+            saved_memories[memory.key] = memory.value
+        memory_conn.commit()
+        return saved_memories
+
+    return None
+
+
+def get_user_memories(user_id: int) -> Dict[str, str]:
+    """Recupera todas las memorias de un usuario."""
+    cursor = memory_conn.cursor()
+    cursor.execute(
+        """
+        SELECT memory_key, memory_value 
+        FROM user_memories 
+        WHERE user_id = ?
+    """,
+        (user_id,),
+    )
+
+    memories = {}
+    for row in cursor.fetchall():
+        memories[row[0]] = row[1]
+
+    return memories
+
+
+def format_memories_for_context(memories: Dict[str, str]) -> str:
+    """Formatea las memorias para incluirlas en el contexto del modelo."""
+    if not memories:
+        return ""
+
+    memory_text = "Información que conozco sobre ti:\n"
+    for key, value in memories.items():
+        memory_text += f"- {key.replace('_', ' ').capitalize()}: {value}\n"
+
+    return memory_text
+
+
+# -----------------------------
+# Tools
+# -----------------------------
+
 
 @tool
 def retriever_tool(query: str, config: RunnableConfig, k: int = 4) -> List[Document]:
@@ -66,10 +198,48 @@ def retriever_tool(query: str, config: RunnableConfig, k: int = 4) -> List[Docum
     return retriever.invoke(query)
 
 
-def generate_query_or_respond(state: MessagesState):
+# -----------------------------
+# Nodos del Grafo
+# -----------------------------
+
+
+def extract_memories_node(state: MessagesState, config: RunnableConfig):
+    """Extrae y guarda memorias del último mensaje del usuario."""
+    user_id = int(config["configurable"].get("user_id"))
+
+    # Obtener el último mensaje del usuario
+    last_user_message = None
+    for m in reversed(state["messages"]):
+        if m.type == "human":
+            last_user_message = m.content
+            break
+
+    if last_user_message:
+        extracted = extract_and_save_memories(last_user_message, user_id)
+        if extracted:
+            print(f"Memorias extraídas para usuario {user_id}: {extracted}")
+
+    return state
+
+
+def generate_query_or_respond(state: MessagesState, config: RunnableConfig):
     """Ask the model; it will decide to call the retriever tool or answer directly."""
-    # Bind the tool that already enforces server-side user/thread filters
-    response = RESPONSE_MODEL.bind_tools([retriever_tool]).invoke(state["messages"])
+    user_id = int(config["configurable"].get("user_id"))
+
+    # Obtener memorias del usuario
+    memories = get_user_memories(user_id)
+    memory_context = format_memories_for_context(memories)
+
+    # Agregar contexto de memorias al mensaje del sistema si existen
+    messages = state["messages"].copy()
+    if memory_context:
+        system_message = {
+            "role": "system",
+            "content": f"{memory_context}\nUsa esta información para personalizar tus respuestas cuando sea relevante.",
+        }
+        messages.insert(0, system_message)
+
+    response = RESPONSE_MODEL.bind_tools([retriever_tool]).invoke(messages)
     return {"messages": [response]}
 
 
@@ -149,15 +319,27 @@ GENERATE_PROMPT = (
 )
 
 
-def generate_answer(state: MessagesState):
-    """Generate an answer."""
+def generate_answer(state: MessagesState, config: RunnableConfig):
+    """Generate an answer with user memories context."""
+    user_id = int(config["configurable"].get("user_id"))
+
     question = ""
     for m in reversed(state["messages"]):
         if m.type == "human":
             question = m.content
             break
+
     context = _last_tool_payload(state["messages"])
-    prompt = GENERATE_PROMPT.format(question=question, context=context)
+
+    # Agregar memorias del usuario al contexto
+    memories = get_user_memories(user_id)
+    memory_context = format_memories_for_context(memories)
+
+    full_context = context
+    if memory_context:
+        full_context = f"{memory_context}\n\nDocumentos recuperados:\n{context}"
+
+    prompt = GENERATE_PROMPT.format(question=question, context=full_context)
     response = RESPONSE_MODEL.invoke([{"role": "user", "content": prompt}])
     return {"messages": [response]}
 
@@ -168,12 +350,15 @@ def generate_answer(state: MessagesState):
 workflow = StateGraph(MessagesState)
 
 # Define the nodes we will cycle between
+workflow.add_node("extract_memories", extract_memories_node)
 workflow.add_node(generate_query_or_respond)
 workflow.add_node("retrieve", ToolNode([retriever_tool]))
 workflow.add_node(rewrite_question)
 workflow.add_node(generate_answer)
 
-workflow.add_edge(START, "generate_query_or_respond")
+# Primero extraemos memorias
+workflow.add_edge(START, "extract_memories")
+workflow.add_edge("extract_memories", "generate_query_or_respond")
 
 # Decide whether to retrieve
 workflow.add_conditional_edges(
@@ -200,3 +385,34 @@ workflow.add_edge("rewrite_question", "generate_query_or_respond")
 conn = sqlite3.connect("chat.db", check_same_thread=False)
 checkpointer = SqliteSaver(conn)
 graph = workflow.compile(checkpointer=checkpointer)
+
+
+# -----------------------------
+# Funciones auxiliares para gestionar memorias
+# -----------------------------
+
+
+def delete_user_memory(user_id: int, memory_key: str):
+    """Elimina una memoria específica de un usuario."""
+    cursor = memory_conn.cursor()
+    cursor.execute(
+        """
+        DELETE FROM user_memories 
+        WHERE user_id = ? AND memory_key = ?
+    """,
+        (user_id, memory_key),
+    )
+    memory_conn.commit()
+
+
+def clear_all_user_memories(user_id: int):
+    """Elimina todas las memorias de un usuario."""
+    cursor = memory_conn.cursor()
+    cursor.execute(
+        """
+        DELETE FROM user_memories 
+        WHERE user_id = ?
+    """,
+        (user_id,),
+    )
+    memory_conn.commit()
