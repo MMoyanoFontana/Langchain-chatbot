@@ -2,7 +2,16 @@
 
 import type { UIMessage } from "ai";
 import type { ComponentProps, HTMLAttributes, ReactElement } from "react";
+import type { BundledLanguage, BundledTheme } from "shiki";
 
+import {
+  CodeBlock,
+  CodeBlockActions,
+  CodeBlockCopyButton,
+  CodeBlockFilename,
+  CodeBlockHeader,
+  CodeBlockTitle,
+} from "@/components/ai-elements/code-block";
 import { Button } from "@/components/ui/button";
 import {
   ButtonGroup,
@@ -22,6 +31,7 @@ import { mermaid } from "@streamdown/mermaid";
 import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
 import {
   createContext,
+  isValidElement,
   memo,
   useCallback,
   useContext,
@@ -323,14 +333,83 @@ export const MessageBranchPage = ({
 export type MessageResponseProps = ComponentProps<typeof Streamdown>;
 
 const streamdownPlugins = { cjk, code, math, mermaid };
+const streamdownShikiTheme: [BundledTheme, BundledTheme] = [
+  "github-light-high-contrast",
+  "github-dark-default",
+];
+const STREAMDOWN_LANGUAGE_REGEX = /language-([^\s]+)/;
+
+type MarkdownCodeProps = ComponentProps<"code"> & {
+  "data-block"?: boolean;
+  node?: unknown;
+};
+
+const getCodeText = (children: unknown): string => {
+  if (typeof children === "string") {
+    return children;
+  }
+  if (Array.isArray(children)) {
+    return children.map(getCodeText).join("");
+  }
+  if (isValidElement(children)) {
+    const elementChildren = (children.props as { children?: unknown }).children;
+    return getCodeText(elementChildren);
+  }
+  return "";
+};
+
+const MarkdownCode = ({
+  className,
+  children,
+  node,
+  "data-block": isBlock,
+  ...props
+}: MarkdownCodeProps) => {
+  void node;
+
+  if (!isBlock) {
+    return (
+      <code
+        className={cn("rounded bg-muted px-1.5 py-0.5 font-mono text-sm", className)}
+        {...props}
+      >
+        {children}
+      </code>
+    );
+  }
+
+  const language =
+    className?.match(STREAMDOWN_LANGUAGE_REGEX)?.[1]?.toLowerCase() ?? "text";
+  const codeText = getCodeText(children).replace(/\n+$/, "");
+
+  return (
+    <CodeBlock
+      code={codeText}
+      language={language as BundledLanguage}
+      showLineNumbers
+    >
+      <CodeBlockHeader>
+        <CodeBlockTitle>
+          <CodeBlockFilename>{language}</CodeBlockFilename>
+        </CodeBlockTitle>
+        <CodeBlockActions>
+          <CodeBlockCopyButton />
+        </CodeBlockActions>
+      </CodeBlockHeader>
+    </CodeBlock>
+  );
+};
 
 export const MessageResponse = memo(
-  ({ className, ...props }: MessageResponseProps) => (
+  ({ className, components, ...props }: MessageResponseProps) => (
     <Streamdown
       className={cn(
         "size-full [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
+        "[&_[data-streamdown=link]]:cursor-pointer",
         className
       )}
+      components={{ ...components, code: MarkdownCode }}
+      shikiTheme={streamdownShikiTheme}
       plugins={streamdownPlugins}
       {...props}
     />

@@ -9,7 +9,7 @@ import {
   ConversationScrollButton,
 } from "@/components/ai-elements/conversation";
 import type { ConversationMessage } from "@/components/ai-elements/conversation";
-import { Message, MessageContent } from "@/components/ai-elements/message";
+import { Message, MessageContent, MessageResponse } from "@/components/ai-elements/message";
 import PromptComposer from "@/components/prompt-composer";
 import { MessageSquareIcon } from "lucide-react";
 import { useCallback, useState } from "react";
@@ -107,7 +107,9 @@ const ConversationDemo = () => {
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl bg-background">
       <Conversation className="min-h-0 flex-1">
-        <ConversationContent className="min-h-full">
+        <ConversationContent
+          className={messages.length === 0 ? "h-full justify-center" : "min-h-full"}
+        >
           {messages.length === 0 ? (
             <ConversationEmptyState
               description="Send a prompt below to start the chat."
@@ -125,7 +127,9 @@ const ConversationDemo = () => {
 
               return (
                 <Message from={from} key={`${index}-${message.role}`}>
-                  <MessageContent>{message.content}</MessageContent>
+                  <MessageContent>
+                    <MessageResponse>{message.content}</MessageResponse>
+                  </MessageContent>
                 </Message>
               );
             })
@@ -134,7 +138,7 @@ const ConversationDemo = () => {
         <ConversationScrollButton />
       </Conversation>
       <div className="p-4">
-        <PromptComposer onSubmitMessage={handleSubmitMessage} />
+        <PromptComposer className="mx-auto w-full max-w-4xl" onSubmitMessage={handleSubmitMessage} />
       </div>
     </div>
   );
