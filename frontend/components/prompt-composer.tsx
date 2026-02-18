@@ -1,6 +1,7 @@
 "use client";
 
 import type { PromptInputMessage } from "@/components/ai-elements/prompt-input";
+import type { AttachmentData } from "@/components/ai-elements/attachments";
 
 import {
     Attachment,
@@ -47,47 +48,13 @@ const models = [
         name: "GPT-4o",
         providers: ["openai", "azure"],
     },
-    {
-        chef: "OpenAI",
-        chefSlug: "openai",
-        id: "gpt-4o-mini",
-        name: "GPT-4o Mini",
-        providers: ["openai", "azure"],
-    },
-    {
-        chef: "Anthropic",
-        chefSlug: "anthropic",
-        id: "claude-opus-4-20250514",
-        name: "Claude 4 Opus",
-        providers: ["anthropic", "azure", "google", "amazon-bedrock"],
-    },
-    {
-        chef: "Anthropic",
-        chefSlug: "anthropic",
-        id: "claude-sonnet-4-20250514",
-        name: "Claude 4 Sonnet",
-        providers: ["anthropic", "azure", "google", "amazon-bedrock"],
-    },
-    {
-        chef: "Google",
-        chefSlug: "google",
-        id: "gemini-2.0-flash-exp",
-        name: "Gemini 2.0 Flash",
-        providers: ["google"],
-    },
 ];
 
 const SUBMITTING_TIMEOUT = 200;
 const STREAMING_TIMEOUT = 2000;
 
 interface AttachmentItemProps {
-    attachment: {
-        id: string;
-        type: "file";
-        filename?: string;
-        mediaType?: string;
-        url: string;
-    };
+    attachment: Extract<AttachmentData, { type: "file" }>;
     onRemove: (id: string) => void;
 }
 
@@ -159,7 +126,12 @@ const PromptInputAttachmentsDisplay = () => {
     );
 };
 
-const Example = () => {
+interface PromptComposerProps {
+    className?: string;
+    onSubmitMessage?: (message: PromptInputMessage) => void | Promise<void>;
+}
+
+const PromptComposer = ({ className, onSubmitMessage }: PromptComposerProps) => {
     const [model, setModel] = useState<string>(models[0].id);
     const [modelSelectorOpen, setModelSelectorOpen] = useState(false);
     const [status, setStatus] = useState<
@@ -182,21 +154,32 @@ const Example = () => {
         }
 
         setStatus("submitted");
+        setStatus("streaming");
 
-        // eslint-disable-next-line no-console
-        console.log("Submitting message:", message);
+        const submitPromise = onSubmitMessage?.(message);
+        if (submitPromise instanceof Promise) {
+            submitPromise
+                .then(() => {
+                    setStatus("ready");
+                })
+                .catch(() => {
+                    setStatus("error");
+                });
+            return;
+        }
 
-        setTimeout(() => {
-            setStatus("streaming");
-        }, SUBMITTING_TIMEOUT);
+        if (onSubmitMessage) {
+            setStatus("ready");
+            return;
+        }
 
         setTimeout(() => {
             setStatus("ready");
-        }, STREAMING_TIMEOUT);
-    }, []);
+        }, SUBMITTING_TIMEOUT + STREAMING_TIMEOUT);
+    }, [onSubmitMessage]);
 
     return (
-        <div className="size-full">
+        <div className={className ?? "size-full"}>
             <PromptInputProvider>
                 <PromptInput globalDrop multiple onSubmit={handleSubmit}>
                     <PromptInputAttachmentsDisplay />
@@ -265,4 +248,4 @@ const Example = () => {
     );
 };
 
-export default Example;
+export default PromptComposer;
