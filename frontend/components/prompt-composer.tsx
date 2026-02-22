@@ -184,7 +184,10 @@ const PromptComposer = ({ className, onSubmitMessage }: PromptComposerProps) => 
                 <PromptInput globalDrop multiple onSubmit={handleSubmit}>
                     <PromptInputAttachmentsDisplay />
                     <PromptInputBody>
-                        <PromptInputTextarea />
+                        <PromptInputTextarea
+                            placeholder="Pregúntame lo que quieras..."
+                            className="pt-3 placeholder:font-medium placeholder:tracking-[0.01em] focus:placeholder:text-muted-foreground/35 transition-colors"
+                        />
                     </PromptInputBody>
                     <PromptInputFooter>
                         <PromptInputTools>
