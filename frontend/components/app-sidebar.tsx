@@ -1,6 +1,8 @@
 "use client"
 
 import { useState } from "react"
+import { usePathname } from "next/navigation"
+import Link from "next/link"
 import {
     Sidebar,
     SidebarContent,
@@ -20,35 +22,22 @@ import {
 
 } from "@/components/ui/collapsible"
 import { NavUser } from "@/components/nav-user"
-import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogHeader,
-    DialogTitle,
-} from "@/components/ui/dialog"
+import { SettingsDialog } from "@/components/settings-diag"
 import { useKeyboardShortcut } from "@/hooks/use-keyboard-shortcut"
-import { ChevronDown, PlusCircle, SearchIcon } from "lucide-react"
+import { CHAT_HISTORY } from "@/lib/chat-threads"
+import { ChevronRight, PlusCircle, SearchIcon } from "lucide-react"
+
+const APP_USER = {
+    name: "Test User",
+    email: "test@example.com",
+    avatar: "/avatars/shadcn.jpg",
+}
 
 export function AppSidebar() {
     const [settingsOpen, setSettingsOpen] = useState(false)
-    const chatHistory = [
-        { id: "chat-1", title: "Planning sprint goals", timestamp: "2m ago" },
-        { id: "chat-2", title: "Fixing sidebar keyboard shortcuts", timestamp: "14m ago" },
-        { id: "chat-3", title: "Tailwind spacing audit", timestamp: "1h ago" },
-        { id: "chat-4", title: "How to deploy LangChain agent", timestamp: "Yesterday" },
-        { id: "chat-5", title: "RAG chunking strategy notes", timestamp: "2 days ago" },
-    ]
+    const pathname = usePathname()
 
-    const data = {
-        user: {
-            name: "Test User",
-            email: "test@example.com",
-            avatar: "/avatars/shadcn.jpg",
-        },
-    }
-
-    useKeyboardShortcut(["ctrl", "shift", ","], () => setSettingsOpen(!settingsOpen))
+    useKeyboardShortcut(["ctrl", "shift", ","], () => setSettingsOpen((prev) => !prev))
 
     return (
         <>
@@ -59,13 +48,15 @@ export function AppSidebar() {
                         <SidebarGroupContent>
                             <SidebarMenu>
                                 <SidebarMenuItem key="new-chat">
-                                    <SidebarMenuButton>
+                                    <SidebarMenuButton
+                                        render={<Link href="/" />}
+                                    >
                                         <PlusCircle />
                                         <span>New chat</span>
                                     </SidebarMenuButton >
                                 </SidebarMenuItem>
                                 <SidebarMenuItem key="search-chat">
-                                    <SidebarMenuButton>
+                                    <SidebarMenuButton render={<Link href="/" />}>
                                         <SearchIcon />
                                         <span>Search</span>
                                     </SidebarMenuButton >
@@ -75,21 +66,28 @@ export function AppSidebar() {
                     </SidebarGroup>
                     <Collapsible defaultOpen className="group/collapsible">
                         <SidebarGroup className="group-data-[collapsible=icon]:hidden">
-                            <SidebarGroupLabel render={<CollapsibleTrigger>
+                            <SidebarGroupLabel render={<CollapsibleTrigger className="group hover:cursor-pointer">
                                 History
-                                <ChevronDown className="ml-auto transition-transform group-data-[state=open]/collapsible:rotate-180" />
+                                <ChevronRight className="ml-auto group-data-[panel-open]:rotate-90" />
                             </CollapsibleTrigger>}>
                             </SidebarGroupLabel>
                             <CollapsibleContent>
                                 <SidebarGroupContent>
                                     <SidebarMenu>
-                                        {chatHistory.map((chat) => (
-                                            <SidebarMenuItem key={chat.id}>
-                                                <SidebarMenuButton render={<a href={`/chat/${chat.id}`} />}>
+                                        {CHAT_HISTORY.map((chat) => {
+                                            const href = `/chats/${chat.id}`
+
+                                            return (
+                                                <SidebarMenuItem key={chat.id}>
+                                                    <SidebarMenuButton
+                                                        isActive={pathname === href}
+                                                        render={<Link href={href} />}
+                                                    >
                                                     <span>{chat.title}</span>
-                                                </SidebarMenuButton>
-                                            </SidebarMenuItem>
-                                        ))}
+                                                    </SidebarMenuButton>
+                                                </SidebarMenuItem>
+                                            )
+                                        })}
                                     </SidebarMenu>
                                 </SidebarGroupContent>
                             </CollapsibleContent>
@@ -97,20 +95,10 @@ export function AppSidebar() {
                     </Collapsible>
                 </SidebarContent>
                 <SidebarFooter>
-                    <NavUser user={data.user} onSettingsClick={() => setSettingsOpen(true)} />
+                    <NavUser user={APP_USER} onSettingsClick={() => setSettingsOpen(true)} />
                 </SidebarFooter>
             </Sidebar>
-
-            <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
-                <DialogContent>
-                    <DialogHeader>
-                        <DialogTitle>Settings</DialogTitle>
-                        <DialogDescription>
-                            Manage your app preferences here.
-                        </DialogDescription>
-                    </DialogHeader>
-                </DialogContent>
-            </Dialog>
+            <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
         </>
     )
 }

@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono, Inter } from "next/font/google";
+import { AppSidebar } from "@/components/app-sidebar";
+import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/components/theme-provider";
 import "./globals.css";
@@ -31,9 +33,18 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
-          <TooltipProvider> {children}</TooltipProvider>
+          <TooltipProvider>
+            <SidebarProvider className="h-[100svh]">
+              <AppSidebar />
+              <div className="flex flex-1 flex-col">
+                <header className="flex h-12 items-center px-3">
+                  <SidebarTrigger />
+                </header>
+                <div className="min-h-0 flex-1 p-2">{children}</div>
+              </div>
+            </SidebarProvider>
+          </TooltipProvider>
         </ThemeProvider>
       </body>
     </html>

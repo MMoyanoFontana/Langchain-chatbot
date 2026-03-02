@@ -11,8 +11,7 @@ import {
 import type { ConversationMessage } from "@/components/ai-elements/conversation";
 import { Message, MessageContent, MessageResponse } from "@/components/ai-elements/message";
 import PromptComposer from "@/components/prompt-composer";
-import { MessageSquareIcon } from "lucide-react";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 const buildMessageText = (message: PromptInputMessage) => {
   const text = message.text?.trim() ?? "";
@@ -29,8 +28,20 @@ const buildMessageText = (message: PromptInputMessage) => {
   return [text, attachmentLine].filter(Boolean).join("\n");
 };
 
-const ConversationDemo = () => {
-  const [messages, setMessages] = useState<ConversationMessage[]>([]);
+interface ChatSessionProps {
+  initialMessages?: ConversationMessage[];
+}
+
+const ChatSession = ({ initialMessages }: ChatSessionProps) => {
+  const [messages, setMessages] = useState<ConversationMessage[]>(() => initialMessages ?? []);
+
+  useEffect(() => {
+    if (!initialMessages) {
+      return;
+    }
+
+    setMessages(initialMessages);
+  }, [initialMessages]);
 
   const updateAssistantMessage = useCallback((index: number, content: string) => {
     setMessages((prev) => {
@@ -112,9 +123,9 @@ const ConversationDemo = () => {
         >
           {messages.length === 0 ? (
             <ConversationEmptyState
-              description="Send a prompt below to start the chat."
-              icon={<MessageSquareIcon className="size-5" />}
-              title="No messages yet"
+              className="[&_h3]:text-2xl [&_h3]:font-semibold [&_p]:text-base"
+              description="Ask me anything to get started. I am here to help."
+              title="Ready when you are"
             />
           ) : (
             messages.map((message, index) => {
@@ -144,4 +155,4 @@ const ConversationDemo = () => {
   );
 };
 
-export default ConversationDemo;
+export default ChatSession;

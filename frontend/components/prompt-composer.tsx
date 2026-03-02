@@ -18,7 +18,6 @@ import {
     ModelSelectorItem,
     ModelSelectorList,
     ModelSelectorLogo,
-    ModelSelectorLogoGroup,
     ModelSelectorName,
     ModelSelectorTrigger,
 } from "@/components/ai-elements/model-selector";
@@ -37,18 +36,68 @@ import {
     PromptInputTools,
     usePromptInputAttachments,
 } from "@/components/ai-elements/prompt-input";
-import { CheckIcon, GlobeIcon } from "lucide-react";
-import { memo, useCallback, useState } from "react";
+import { CheckIcon, ChevronDown, ChevronRight } from "lucide-react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 
-const models = [
+interface CatalogProvider {
+    id: number;
+    code: string;
+    display_name: string;
+    is_active: boolean;
+}
+
+interface CatalogModelResponse {
+    id: number;
+    model_id: string;
+    display_name: string;
+    is_active: boolean;
+    provider: CatalogProvider;
+}
+
+interface ComposerModel {
+    id: string;
+    name: string;
+    providerLabel: string;
+    providerSlug: string;
+}
+
+interface ProviderModelGroup {
+    providerLabel: string;
+    providerSlug: string;
+    models: ComposerModel[];
+}
+
+const getProviderGroupKey = (group: ProviderModelGroup): string =>
+    `${group.providerSlug}:${group.providerLabel}`;
+
+const PROVIDER_LOGO_MAP: Record<string, string> = {
+    gemini: "google",
+};
+
+const FALLBACK_MODELS: ComposerModel[] = [
     {
-        chef: "OpenAI",
-        chefSlug: "openai",
         id: "gpt-4o",
         name: "GPT-4o",
-        providers: ["openai", "azure"],
+        providerLabel: "OpenAI",
+        providerSlug: "openai",
     },
 ];
+
+const normalizeProviderSlug = (providerCode: string): string =>
+    PROVIDER_LOGO_MAP[providerCode] ?? providerCode;
+
+const mapCatalogModelToComposerModel = (
+    catalogModel: CatalogModelResponse
+): ComposerModel => {
+    const providerSlug = normalizeProviderSlug(catalogModel.provider.code);
+
+    return {
+        id: catalogModel.model_id,
+        name: catalogModel.display_name,
+        providerLabel: catalogModel.provider.display_name,
+        providerSlug,
+    };
+};
 
 const SUBMITTING_TIMEOUT = 200;
 const STREAMING_TIMEOUT = 2000;
@@ -74,22 +123,22 @@ const AttachmentItem = memo(({ attachment, onRemove }: AttachmentItemProps) => {
 AttachmentItem.displayName = "AttachmentItem";
 
 interface ModelItemProps {
-    m: (typeof models)[0];
+    m: ComposerModel;
     selectedModel: string;
     onSelect: (id: string) => void;
+    className?: string;
 }
 
-const ModelItem = memo(({ m, selectedModel, onSelect }: ModelItemProps) => {
+const ModelItem = memo(({ m, selectedModel, onSelect, className }: ModelItemProps) => {
     const handleSelect = useCallback(() => onSelect(m.id), [onSelect, m.id]);
     return (
-        <ModelSelectorItem key={m.id} onSelect={handleSelect} value={m.id}>
-            <ModelSelectorLogo provider={m.chefSlug} />
+        <ModelSelectorItem
+            className={className}
+            key={m.id}
+            onSelect={handleSelect}
+            value={m.id}
+        >
             <ModelSelectorName>{m.name}</ModelSelectorName>
-            <ModelSelectorLogoGroup>
-                {m.providers.map((provider) => (
-                    <ModelSelectorLogo key={provider} provider={provider} />
-                ))}
-            </ModelSelectorLogoGroup>
             {selectedModel === m.id ? (
                 <CheckIcon className="ml-auto size-4" />
             ) : (
@@ -132,17 +181,99 @@ interface PromptComposerProps {
 }
 
 const PromptComposer = ({ className, onSubmitMessage }: PromptComposerProps) => {
-    const [model, setModel] = useState<string>(models[0].id);
+    const [availableModels, setAvailableModels] = useState<ComposerModel[]>(FALLBACK_MODELS);
+    const [model, setModel] = useState<string>(FALLBACK_MODELS[0].id);
     const [modelSelectorOpen, setModelSelectorOpen] = useState(false);
+    const [collapsedProviders, setCollapsedProviders] = useState<Set<string>>(new Set());
+    const [modelsLoading, setModelsLoading] = useState(true);
     const [status, setStatus] = useState<
         "submitted" | "streaming" | "ready" | "error"
     >("ready");
 
-    const selectedModelData = models.find((m) => m.id === model);
+    useEffect(() => {
+        let isCancelled = false;
+
+        const loadModels = async () => {
+            try {
+                const response = await fetch("/api/models", { cache: "no-store" });
+                if (!response.ok) {
+                    throw new Error(`Models request failed with status ${response.status}`);
+                }
+
+                const payload = (await response.json()) as CatalogModelResponse[];
+                const mappedModels = payload.map(mapCatalogModelToComposerModel);
+
+                if (isCancelled) {
+                    return;
+                }
+
+                if (mappedModels.length === 0) {
+                    setAvailableModels(FALLBACK_MODELS);
+                    setModel(FALLBACK_MODELS[0].id);
+                    return;
+                }
+
+                setAvailableModels(mappedModels);
+                setModel((previous) =>
+                    mappedModels.some((entry) => entry.id === previous)
+                        ? previous
+                        : mappedModels[0].id
+                );
+            } catch {
+                if (!isCancelled) {
+                    setAvailableModels(FALLBACK_MODELS);
+                    setModel(FALLBACK_MODELS[0].id);
+                }
+            } finally {
+                if (!isCancelled) {
+                    setModelsLoading(false);
+                }
+            }
+        };
+
+        void loadModels();
+
+        return () => {
+            isCancelled = true;
+        };
+    }, []);
+
+    const selectedModelData = availableModels.find((entry) => entry.id === model);
+
+    const modelsByProvider = useMemo(() => {
+        const grouped = new Map<string, ProviderModelGroup>();
+
+        for (const entry of availableModels) {
+            const existingGroup = grouped.get(entry.providerLabel);
+            if (existingGroup) {
+                existingGroup.models.push(entry);
+            } else {
+                grouped.set(entry.providerLabel, {
+                    providerLabel: entry.providerLabel,
+                    providerSlug: entry.providerSlug,
+                    models: [entry],
+                });
+            }
+        }
+
+        return Array.from(grouped.values());
+    }, [availableModels]);
 
     const handleModelSelect = useCallback((id: string) => {
         setModel(id);
         setModelSelectorOpen(false);
+    }, []);
+
+    const toggleProviderGroup = useCallback((groupKey: string) => {
+        setCollapsedProviders((previous) => {
+            const next = new Set(previous);
+            if (next.has(groupKey)) {
+                next.delete(groupKey);
+            } else {
+                next.add(groupKey);
+            }
+            return next;
+        });
     }, []);
 
     const handleSubmit = useCallback((message: PromptInputMessage) => {
@@ -185,7 +316,7 @@ const PromptComposer = ({ className, onSubmitMessage }: PromptComposerProps) => 
                     <PromptInputAttachmentsDisplay />
                     <PromptInputBody>
                         <PromptInputTextarea
-                            placeholder="Pregúntame lo que quieras..."
+                            placeholder="Ask me anything..."
                             className="pt-3 placeholder:font-medium placeholder:tracking-[0.01em] focus:placeholder:text-muted-foreground/35 transition-colors"
                         />
                     </PromptInputBody>
@@ -197,10 +328,6 @@ const PromptComposer = ({ className, onSubmitMessage }: PromptComposerProps) => 
                                     <PromptInputActionAddAttachments />
                                 </PromptInputActionMenuContent>
                             </PromptInputActionMenu>
-                            <PromptInputButton>
-                                <GlobeIcon size={16} />
-                                <span>Search</span>
-                            </PromptInputButton>
                             <ModelSelector
                                 onOpenChange={setModelSelectorOpen}
                                 open={modelSelectorOpen}
@@ -208,37 +335,62 @@ const PromptComposer = ({ className, onSubmitMessage }: PromptComposerProps) => 
                                 <ModelSelectorTrigger
                                     render={
                                         <PromptInputButton>
-                                            {selectedModelData?.chefSlug && (
+                                            {selectedModelData?.providerSlug && (
                                                 <ModelSelectorLogo
-                                                    provider={selectedModelData.chefSlug}
+                                                    provider={selectedModelData.providerSlug}
                                                 />
                                             )}
-                                            {selectedModelData?.name && (
-                                                <ModelSelectorName>
-                                                    {selectedModelData.name}
-                                                </ModelSelectorName>
-                                            )}
+                                            <ModelSelectorName>
+                                                {selectedModelData?.name ?? "Select model"}
+                                            </ModelSelectorName>
                                         </PromptInputButton>
                                     }
                                 />
                                 <ModelSelectorContent>
                                     <ModelSelectorInput placeholder="Search models..." />
-                                    <ModelSelectorList>
-                                        <ModelSelectorEmpty>No models found.</ModelSelectorEmpty>
-                                        {["OpenAI", "Anthropic", "Google"].map((chef) => (
-                                            <ModelSelectorGroup heading={chef} key={chef}>
-                                                {models
-                                                    .filter((m) => m.chef === chef)
-                                                    .map((m) => (
+                                    <ModelSelectorList className="[scrollbar-width:thin] [scrollbar-color:var(--color-border)_transparent] [&::-webkit-scrollbar]:block [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border/70 hover:[&::-webkit-scrollbar-thumb]:bg-border">
+                                        <ModelSelectorEmpty>
+                                            {modelsLoading ? "Loading models..." : "No models found."}
+                                        </ModelSelectorEmpty>
+                                        {modelsByProvider.map((group) => {
+                                            const groupKey = getProviderGroupKey(group);
+                                            const isCollapsed = collapsedProviders.has(groupKey);
+
+                                            return (
+                                                <ModelSelectorGroup
+                                                    heading={
+                                                        <button
+                                                            aria-label={`Toggle ${group.providerLabel} models`}
+                                                            className="inline-flex w-full items-center gap-2 rounded-sm px-1 py-0.5 text-left text-sm font-semibold"
+                                                            onClick={() => toggleProviderGroup(groupKey)}
+                                                            type="button"
+                                                        >
+                                                            {isCollapsed ? (
+                                                                <ChevronRight className="size-4" />
+                                                            ) : (
+                                                                <ChevronDown className="size-4" />
+                                                            )}
+                                                            <ModelSelectorLogo
+                                                                className="size-4"
+                                                                provider={group.providerSlug}
+                                                            />
+                                                            <span>{group.providerLabel}</span>
+                                                        </button>
+                                                    }
+                                                    key={groupKey}
+                                                >
+                                                    {group.models.map((entry) => (
                                                         <ModelItem
-                                                            key={m.id}
-                                                            m={m}
+                                                            className={isCollapsed ? "hidden" : undefined}
+                                                            key={entry.id}
+                                                            m={entry}
                                                             onSelect={handleModelSelect}
                                                             selectedModel={model}
                                                         />
                                                     ))}
-                                            </ModelSelectorGroup>
-                                        ))}
+                                                </ModelSelectorGroup>
+                                            );
+                                        })}
                                     </ModelSelectorList>
                                 </ModelSelectorContent>
                             </ModelSelector>
