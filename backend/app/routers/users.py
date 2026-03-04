@@ -3,11 +3,14 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.db import get_db
-from app.models import Provider, ProviderApiKey, ProviderCode, User
+from app.models import ChatThread, Provider, ProviderApiKey, ProviderCode, User
 from app.schemas import (
+    ChatThreadRead,
+    ChatThreadSummaryRead,
+    ChatThreadUpdate,
     ProviderApiKeyRead,
     ProviderApiKeyUpdate,
     ProviderApiKeyUpsert,
@@ -21,6 +24,9 @@ from app.security import EncryptionConfigError, decrypt_secret, encrypt_secret, 
 
 router = APIRouter(prefix="/users", tags=["users"])
 
+DEV_USER_ID = "00000000-0000-0000-0000-000000000001"
+DEV_USER_EMAIL = "user@local.chatbot"
+
 
 def _get_user_or_404(db: Session, user_id: str) -> User:
     user = db.get(User, user_id)
@@ -29,11 +35,34 @@ def _get_user_or_404(db: Session, user_id: str) -> User:
     return user
 
 
+def _get_dev_user_or_404(db: Session) -> User:
+    user = db.get(User, DEV_USER_ID)
+    if user is not None:
+        return user
+
+    existing = db.scalar(select(User).where(User.email == DEV_USER_EMAIL))
+    if existing is not None:
+        return existing
+
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Current user not found.")
+
+
 def _get_provider_or_404(db: Session, provider_code: ProviderCode) -> Provider:
     provider = db.scalar(select(Provider).where(Provider.code == provider_code))
     if provider is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Provider not found.")
     return provider
+
+
+def _get_thread_or_404(db: Session, user_id: str, thread_id: str, include_messages: bool = False) -> ChatThread:
+    query = select(ChatThread).where(ChatThread.id == thread_id, ChatThread.user_id == user_id)
+    if include_messages:
+        query = query.options(selectinload(ChatThread.messages))
+
+    thread = db.scalar(query)
+    if thread is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chat thread not found.")
+    return thread
 
 
 def _normalize_key_name(key_name: str) -> str:
@@ -65,6 +94,10 @@ def _build_api_key_response(api_key: ProviderApiKey) -> ProviderApiKeyRead:
     )
 
 
+def _build_thread_read(thread: ChatThread) -> ChatThreadRead:
+    return ChatThreadRead.model_validate(thread)
+
+
 @router.get("", response_model=list[UserRead])
 def list_users(db: Session = Depends(get_db)) -> list[User]:
     return list(db.scalars(select(User).order_by(User.created_at.desc())).all())
@@ -85,6 +118,96 @@ def create_user(payload: UserCreate, db: Session = Depends(get_db)) -> User:
     db.commit()
     db.refresh(user)
     return user
+
+
+@router.get("/dev/current", response_model=UserRead)
+def get_dev_current_user(db: Session = Depends(get_db)) -> User:
+    return _get_dev_user_or_404(db)
+
+
+@router.patch("/dev/current", response_model=UserRead)
+def update_dev_current_user(payload: UserUpdate, db: Session = Depends(get_db)) -> User:
+    user = _get_dev_user_or_404(db)
+    return update_user(user.id, payload, db)
+
+
+@router.delete("/dev/current", status_code=status.HTTP_204_NO_CONTENT)
+def delete_dev_current_user(db: Session = Depends(get_db)) -> Response:
+    user = db.get(User, DEV_USER_ID)
+    if user is None:
+        user = db.scalar(select(User).where(User.email == DEV_USER_EMAIL))
+    if user is None:
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    db.delete(user)
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/dev/current/settings/providers", response_model=list[ProviderSettingsRead])
+def list_dev_user_provider_settings(db: Session = Depends(get_db)) -> list[ProviderSettingsRead]:
+    user = _get_dev_user_or_404(db)
+    return list_user_provider_settings(user.id, db)
+
+
+@router.get("/dev/current/settings/api-keys", response_model=list[ProviderApiKeyRead])
+def list_dev_user_api_keys(db: Session = Depends(get_db)) -> list[ProviderApiKeyRead]:
+    user = _get_dev_user_or_404(db)
+    return list_user_api_keys(user.id, db)
+
+
+@router.put("/dev/current/settings/api-keys/{provider_code}", response_model=ProviderApiKeyRead)
+def upsert_dev_user_api_key(
+    provider_code: ProviderCode,
+    payload: ProviderApiKeyUpsert,
+    db: Session = Depends(get_db),
+) -> ProviderApiKeyRead:
+    user = _get_dev_user_or_404(db)
+    return upsert_user_api_key(user.id, provider_code, payload, db)
+
+
+@router.patch("/dev/current/settings/api-keys/{api_key_id}", response_model=ProviderApiKeyRead)
+def update_dev_user_api_key(
+    api_key_id: str,
+    payload: ProviderApiKeyUpdate,
+    db: Session = Depends(get_db),
+) -> ProviderApiKeyRead:
+    user = _get_dev_user_or_404(db)
+    return update_user_api_key(user.id, api_key_id, payload, db)
+
+
+@router.delete("/dev/current/settings/api-keys/{api_key_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_dev_user_api_key(api_key_id: str, db: Session = Depends(get_db)) -> Response:
+    user = _get_dev_user_or_404(db)
+    return delete_user_api_key(user.id, api_key_id, db)
+
+
+@router.get("/dev/current/threads", response_model=list[ChatThreadSummaryRead])
+def list_dev_user_threads(db: Session = Depends(get_db)) -> list[ChatThread]:
+    user = _get_dev_user_or_404(db)
+    return list_user_threads(user.id, db)
+
+
+@router.get("/dev/current/threads/{thread_id}", response_model=ChatThreadRead)
+def get_dev_user_thread(thread_id: str, db: Session = Depends(get_db)) -> ChatThreadRead:
+    user = _get_dev_user_or_404(db)
+    return get_user_thread(user.id, thread_id, db)
+
+
+@router.patch("/dev/current/threads/{thread_id}", response_model=ChatThreadSummaryRead)
+def update_dev_user_thread(
+    thread_id: str,
+    payload: ChatThreadUpdate,
+    db: Session = Depends(get_db),
+) -> ChatThread:
+    user = _get_dev_user_or_404(db)
+    return update_user_thread(user.id, thread_id, payload, db)
+
+
+@router.delete("/dev/current/threads/{thread_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_dev_user_thread(thread_id: str, db: Session = Depends(get_db)) -> Response:
+    user = _get_dev_user_or_404(db)
+    return delete_user_thread(user.id, thread_id, db)
 
 
 @router.get("/{user_id}", response_model=UserRead)
@@ -120,6 +243,52 @@ def update_user(user_id: str, payload: UserUpdate, db: Session = Depends(get_db)
 def delete_user(user_id: str, db: Session = Depends(get_db)) -> Response:
     user = _get_user_or_404(db, user_id)
     db.delete(user)
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/{user_id}/threads", response_model=list[ChatThreadSummaryRead])
+def list_user_threads(user_id: str, db: Session = Depends(get_db)) -> list[ChatThread]:
+    _get_user_or_404(db, user_id)
+    threads = db.scalars(
+        select(ChatThread)
+        .where(ChatThread.user_id == user_id)
+        .order_by(ChatThread.updated_at.desc())
+    ).all()
+    return list(threads)
+
+
+@router.get("/{user_id}/threads/{thread_id}", response_model=ChatThreadRead)
+def get_user_thread(user_id: str, thread_id: str, db: Session = Depends(get_db)) -> ChatThreadRead:
+    _get_user_or_404(db, user_id)
+    thread = _get_thread_or_404(db, user_id, thread_id, include_messages=True)
+    return _build_thread_read(thread)
+
+
+@router.patch("/{user_id}/threads/{thread_id}", response_model=ChatThreadSummaryRead)
+def update_user_thread(
+    user_id: str,
+    thread_id: str,
+    payload: ChatThreadUpdate,
+    db: Session = Depends(get_db),
+) -> ChatThread:
+    _get_user_or_404(db, user_id)
+    thread = _get_thread_or_404(db, user_id, thread_id)
+    normalized_title = payload.title.strip()
+    if not normalized_title:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Thread title cannot be blank.")
+
+    thread.title = normalized_title
+    db.commit()
+    db.refresh(thread)
+    return thread
+
+
+@router.delete("/{user_id}/threads/{thread_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_user_thread(user_id: str, thread_id: str, db: Session = Depends(get_db)) -> Response:
+    _get_user_or_404(db, user_id)
+    thread = _get_thread_or_404(db, user_id, thread_id)
+    db.delete(thread)
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 

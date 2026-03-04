@@ -4,7 +4,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.models import ProviderCode
+from app.models import MessageRole, ProviderCode
 
 
 class UserCreate(BaseModel):
@@ -78,3 +78,36 @@ class ProviderModelRead(BaseModel):
     display_name: str
     is_active: bool
     provider: ProviderRead
+
+
+class ChatMessageRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    role: MessageRole
+    content: str
+    model_name: str | None
+    created_at: datetime
+
+
+class ChatThreadSummaryRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    title: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ChatThreadRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    title: str | None
+    created_at: datetime
+    updated_at: datetime
+    messages: list[ChatMessageRead]
+
+
+class ChatThreadUpdate(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
