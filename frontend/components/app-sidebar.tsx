@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { usePathname } from "next/navigation"
+import { usePathname, useRouter } from "next/navigation"
 import Link from "next/link"
 import {
     Sidebar,
@@ -12,6 +12,7 @@ import {
     SidebarGroupLabel,
     SidebarHeader,
     SidebarMenu,
+    SidebarMenuAction,
     SidebarMenuButton,
     SidebarMenuItem,
 } from "@/components/ui/sidebar"
@@ -21,23 +22,88 @@ import {
     CollapsibleTrigger,
 
 } from "@/components/ui/collapsible"
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuSeparator,
+    DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import { DeleteThreadDialog } from "@/components/delete-thread-dialog"
 import { NavUser } from "@/components/nav-user"
-import { SettingsDialog } from "@/components/settings-diag"
+import { RenameThreadDialog } from "@/components/rename-thread-dialog"
+import { SettingsDialog } from "@/components/settings-dialog"
 import { useKeyboardShortcut } from "@/hooks/use-keyboard-shortcut"
-import { CHAT_HISTORY } from "@/lib/chat-threads"
-import { ChevronRight, PlusCircle, SearchIcon } from "lucide-react"
+import type { SidebarUser } from "@/hooks/use-sidebar-user"
+import { useSidebarUser } from "@/hooks/use-sidebar-user"
+import { MAX_THREAD_TITLE_LENGTH, useThreadActions } from "@/hooks/use-thread-actions"
+import { useThreadHistory } from "@/hooks/use-thread-history"
+import { ChevronRight, MoreHorizontal, PencilIcon, PlusCircle, SearchIcon, Trash2 } from "lucide-react"
 
-const APP_USER = {
-    name: "Test User",
-    email: "test@example.com",
-    avatar: "/avatars/shadcn.jpg",
+type AppSidebarProps = {
+    initialUser?: SidebarUser | null
 }
 
-export function AppSidebar() {
+export function AppSidebar({ initialUser }: AppSidebarProps) {
+    const router = useRouter()
     const [settingsOpen, setSettingsOpen] = useState(false)
     const pathname = usePathname()
 
-    useKeyboardShortcut(["ctrl", "shift", ","], () => setSettingsOpen((prev) => !prev))
+    const {
+        user: appUser,
+        isLoading: userLoading,
+        refresh: refreshUser,
+    } = useSidebarUser(initialUser)
+
+    const {
+        threads: chatHistory,
+        isLoading: historyLoading,
+        error: historyError,
+        refresh: refreshHistory,
+    } = useThreadHistory(pathname)
+
+    const {
+        threadActionLoadingId,
+        renameDialogOpen,
+        deleteDialogOpen,
+        activeThread,
+        renameValue,
+        renameError,
+        deleteError,
+        renameValidationError,
+        canSubmitRename,
+        canSubmitDelete,
+        setRenameValue,
+        openRenameDialog,
+        openDeleteDialog,
+        closeRenameDialog,
+        closeDeleteDialog,
+        submitRename,
+        submitDelete,
+    } = useThreadActions({
+        pathname,
+        refreshHistory,
+        navigateToRoot: () => {
+            router.replace("/")
+        },
+    })
+
+    useKeyboardShortcut(["ctrl", "shift", ","], () => {
+        setSettingsOpen((previous) => {
+            const next = !previous
+            if (!next) {
+                void refreshUser()
+            }
+            return next
+        })
+    })
+
+    const handleSettingsOpenChange = (open: boolean) => {
+        setSettingsOpen(open)
+        if (!open) {
+            void refreshUser()
+        }
+    }
 
     return (
         <>
@@ -66,7 +132,7 @@ export function AppSidebar() {
                     </SidebarGroup>
                     <Collapsible defaultOpen className="group/collapsible">
                         <SidebarGroup className="group-data-[collapsible=icon]:hidden">
-                            <SidebarGroupLabel render={<CollapsibleTrigger className="group hover:cursor-pointer">
+                            <SidebarGroupLabel className="transition-colors hover:bg-muted" render={<CollapsibleTrigger className="group hover:cursor-pointer">
                                 History
                                 <ChevronRight className="ml-auto group-data-[panel-open]:rotate-90" />
                             </CollapsibleTrigger>}>
@@ -74,20 +140,79 @@ export function AppSidebar() {
                             <CollapsibleContent>
                                 <SidebarGroupContent>
                                     <SidebarMenu>
-                                        {CHAT_HISTORY.map((chat) => {
-                                            const href = `/chats/${chat.id}`
+                                        {historyLoading ? (
+                                            <SidebarMenuItem key="history-loading">
+                                                <SidebarMenuButton disabled>
+                                                    <span>Loading chats...</span>
+                                                </SidebarMenuButton>
+                                            </SidebarMenuItem>
+                                        ) : historyError ? (
+                                            <SidebarMenuItem key="history-error">
+                                                <SidebarMenuButton disabled>
+                                                    <span>{historyError}</span>
+                                                </SidebarMenuButton>
+                                            </SidebarMenuItem>
+                                        ) : chatHistory.length === 0 ? (
+                                            <SidebarMenuItem key="history-empty">
+                                                <SidebarMenuButton disabled>
+                                                    <span>No chats yet</span>
+                                                </SidebarMenuButton>
+                                            </SidebarMenuItem>
+                                        ) : (
+                                            chatHistory.map((chat) => {
+                                                const href = `/chats/${chat.id}`
+                                                const isActionLoading = threadActionLoadingId === chat.id
 
-                                            return (
-                                                <SidebarMenuItem key={chat.id}>
-                                                    <SidebarMenuButton
-                                                        isActive={pathname === href}
-                                                        render={<Link href={href} />}
-                                                    >
-                                                    <span>{chat.title}</span>
-                                                    </SidebarMenuButton>
-                                                </SidebarMenuItem>
-                                            )
-                                        })}
+                                                return (
+                                                    <SidebarMenuItem key={chat.id}>
+                                                        <SidebarMenuButton
+                                                            isActive={pathname === href}
+                                                            render={<Link href={href} />}
+                                                        >
+                                                            <span>{chat.title}</span>
+                                                        </SidebarMenuButton>
+                                                        <DropdownMenu>
+                                                            <DropdownMenuTrigger
+                                                                render={
+                                                                    <SidebarMenuAction
+                                                                        showOnHover
+                                                                        onClick={(event) => {
+                                                                            event.preventDefault()
+                                                                            event.stopPropagation()
+                                                                        }}
+                                                                    >
+                                                                        <MoreHorizontal />
+                                                                        <span className="sr-only">Chat actions</span>
+                                                                    </SidebarMenuAction>
+                                                                }
+                                                            />
+                                                            <DropdownMenuContent side="right" align="start">
+                                                                <DropdownMenuItem
+                                                                    disabled={isActionLoading}
+                                                                    onClick={() => {
+                                                                        openRenameDialog(chat)
+                                                                    }}
+                                                                >
+                                                                    <PencilIcon />
+                                                                    Rename
+                                                                </DropdownMenuItem>
+                                                                <DropdownMenuSeparator />
+                                                                <DropdownMenuItem
+                                                                    variant="destructive"
+                                                                    disabled={isActionLoading}
+                                                                    onClick={() => {
+                                                                        openDeleteDialog(chat)
+                                                                    }}
+                                                                >
+                                                                    <Trash2 />
+                                                                    Delete
+                                                                </DropdownMenuItem>
+                                                            </DropdownMenuContent>
+                                                        </DropdownMenu>
+                                                    </SidebarMenuItem>
+                                                )
+                                            })
+                                        )}
                                     </SidebarMenu>
                                 </SidebarGroupContent>
                             </CollapsibleContent>
@@ -95,10 +220,53 @@ export function AppSidebar() {
                     </Collapsible>
                 </SidebarContent>
                 <SidebarFooter>
-                    <NavUser user={APP_USER} onSettingsClick={() => setSettingsOpen(true)} />
+                    {userLoading ? (
+                        <SidebarMenu>
+                            <SidebarMenuItem>
+                                <SidebarMenuButton disabled>
+                                    <span>Loading account...</span>
+                                </SidebarMenuButton>
+                            </SidebarMenuItem>
+                        </SidebarMenu>
+                    ) : appUser ? (
+                        <NavUser user={appUser} onSettingsClick={() => handleSettingsOpenChange(true)} />
+                    ) : (
+                        <SidebarMenu>
+                            <SidebarMenuItem>
+                                <SidebarMenuButton disabled>
+                                    <span>No signed-in user</span>
+                                </SidebarMenuButton>
+                            </SidebarMenuItem>
+                        </SidebarMenu>
+                    )}
                 </SidebarFooter>
             </Sidebar>
-            <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+            <SettingsDialog open={settingsOpen} onOpenChange={handleSettingsOpenChange} />
+            <RenameThreadDialog
+                open={renameDialogOpen}
+                value={renameValue}
+                validationError={renameValidationError}
+                requestError={renameError}
+                isSubmitting={Boolean(threadActionLoadingId)}
+                canSubmit={canSubmitRename}
+                maxLength={MAX_THREAD_TITLE_LENGTH}
+                onValueChange={setRenameValue}
+                onSubmit={() => {
+                    void submitRename()
+                }}
+                onClose={closeRenameDialog}
+            />
+            <DeleteThreadDialog
+                open={deleteDialogOpen}
+                threadTitle={activeThread?.title}
+                error={deleteError}
+                isSubmitting={Boolean(threadActionLoadingId)}
+                canSubmit={canSubmitDelete}
+                onSubmit={() => {
+                    void submitDelete()
+                }}
+                onClose={closeDeleteDialog}
+            />
         </>
     )
 }
