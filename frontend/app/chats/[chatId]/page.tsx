@@ -1,5 +1,5 @@
 import ChatSession from "@/components/chat-session";
-import { getChatThreadById } from "@/lib/chat-threads";
+import type { ConversationMessage } from "@/components/ai-elements/conversation";
 import { notFound } from "next/navigation";
 
 type ChatPageProps = {
@@ -8,13 +8,42 @@ type ChatPageProps = {
     }>;
 };
 
+type ThreadMessageResponse = {
+    role: string;
+    content: string;
+};
+
+type ThreadResponse = {
+    id: string;
+    messages: ThreadMessageResponse[];
+};
+
+const BACKEND_URL = process.env.BACKEND_URL ?? "http://127.0.0.1:8000";
+
+const toConversationRole = (role: string): ConversationMessage["role"] => {
+    if (role === "user" || role === "assistant" || role === "system" || role === "data" || role === "tool") {
+        return role;
+    }
+    return "assistant";
+};
+
 export default async function ChatPage({ params }: ChatPageProps) {
     const { chatId } = await params;
-    const chat = getChatThreadById(chatId);
+    const backendEndpoint = new URL(`/users/dev/current/threads/${chatId}`, BACKEND_URL);
+    const response = await fetch(backendEndpoint, {
+        headers: { Accept: "application/json" },
+        cache: "no-store",
+    });
 
-    if (!chat) {
+    if (!response.ok) {
         notFound();
     }
 
-    return <ChatSession initialMessages={chat.messages} />;
+    const thread = (await response.json()) as ThreadResponse;
+    const initialMessages: ConversationMessage[] = thread.messages.map((message) => ({
+        role: toConversationRole(message.role),
+        content: message.content,
+    }));
+
+    return <ChatSession initialMessages={initialMessages} initialThreadId={thread.id} />;
 }

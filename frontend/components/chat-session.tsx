@@ -11,6 +11,7 @@ import {
 import type { ConversationMessage } from "@/components/ai-elements/conversation";
 import { Message, MessageContent, MessageResponse } from "@/components/ai-elements/message";
 import PromptComposer from "@/components/prompt-composer";
+import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
 const buildMessageText = (message: PromptInputMessage) => {
@@ -30,10 +31,14 @@ const buildMessageText = (message: PromptInputMessage) => {
 
 interface ChatSessionProps {
   initialMessages?: ConversationMessage[];
+  initialThreadId?: string;
 }
 
-const ChatSession = ({ initialMessages }: ChatSessionProps) => {
+const ChatSession = ({ initialMessages, initialThreadId }: ChatSessionProps) => {
+  const router = useRouter();
+  const pathname = usePathname();
   const [messages, setMessages] = useState<ConversationMessage[]>(() => initialMessages ?? []);
+  const [threadId, setThreadId] = useState<string | null>(() => initialThreadId ?? null);
 
   useEffect(() => {
     if (!initialMessages) {
@@ -42,6 +47,10 @@ const ChatSession = ({ initialMessages }: ChatSessionProps) => {
 
     setMessages(initialMessages);
   }, [initialMessages]);
+
+  useEffect(() => {
+    setThreadId(initialThreadId ?? null);
+  }, [initialThreadId]);
 
   const updateAssistantMessage = useCallback((index: number, content: string) => {
     setMessages((prev) => {
@@ -74,7 +83,7 @@ const ChatSession = ({ initialMessages }: ChatSessionProps) => {
 
     try {
       const response = await fetch("/api/chat", {
-        body: JSON.stringify({ prompt: userContent }),
+        body: JSON.stringify({ prompt: userContent, threadId }),
         headers: { "Content-Type": "application/json" },
         method: "POST",
       });
@@ -86,6 +95,11 @@ const ChatSession = ({ initialMessages }: ChatSessionProps) => {
 
       if (!response.body) {
         throw new Error("No response stream received.");
+      }
+
+      const resolvedThreadId = response.headers.get("x-thread-id");
+      if (resolvedThreadId && resolvedThreadId !== threadId) {
+        setThreadId(resolvedThreadId);
       }
 
       const reader = response.body.getReader();
@@ -107,19 +121,26 @@ const ChatSession = ({ initialMessages }: ChatSessionProps) => {
         assistantMessageIndex,
         assistantContent.trim() ? assistantContent : "(No response)"
       );
+
+      window.dispatchEvent(new Event("chat-threads-updated"));
+      if (resolvedThreadId && pathname === "/") {
+        router.replace(`/chats/${resolvedThreadId}`);
+      }
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Unexpected chat error.";
 
       updateAssistantMessage(assistantMessageIndex, `Error: ${errorMessage}`);
     }
-  }, [updateAssistantMessage]);
+  }, [pathname, router, threadId, updateAssistantMessage]);
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl bg-background">
-      <Conversation className="min-h-0 flex-1">
+    <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl bg-background">
+      <Conversation className="min-h-0 min-w-0 flex-1">
         <ConversationContent
-          className={messages.length === 0 ? "h-full justify-center" : "min-h-full"}
+          className={`mx-auto w-full max-w-4xl ${
+            messages.length === 0 ? "h-full justify-center" : "min-h-full"
+          }`}
         >
           {messages.length === 0 ? (
             <ConversationEmptyState
