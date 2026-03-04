@@ -22,7 +22,7 @@ CHAT_MODEL = "gpt-4o-mini"
 THREAD_TITLE_MAX_LENGTH = 120
 ASSISTANT_SYSTEM_PROMPT = (
     "You are a helpful assistant. When asked for or using Markdown, "
-    "Always use four backticks instead of the usual three to enclose Markdown documents"
+    "Always use four tildes to enclose Markdown documents like this: ~~~~ ... ~~~~"
 )
 
 load_dotenv()
