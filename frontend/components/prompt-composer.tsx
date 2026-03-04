@@ -361,7 +361,7 @@ const PromptComposer = ({ className, onSubmitMessage }: PromptComposerProps) => 
                                                     heading={
                                                         <button
                                                             aria-label={`Toggle ${group.providerLabel} models`}
-                                                            className="inline-flex w-full items-center gap-2 rounded-sm px-1 py-0.5 text-left text-sm font-semibold"
+                                                            className="inline-flex w-full cursor-pointer items-center gap-2 rounded-sm px-1 py-0.5 text-left text-sm font-semibold transition-colors hover:bg-muted"
                                                             onClick={() => toggleProviderGroup(groupKey)}
                                                             type="button"
                                                         >

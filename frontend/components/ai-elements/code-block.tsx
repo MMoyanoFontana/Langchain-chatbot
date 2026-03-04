@@ -276,7 +276,7 @@ const CodeBlockBody = memo(
     return (
       <pre
         className={cn(
-          "dark:!bg-[var(--codeblock)] dark:!text-[var(--shiki-dark)] m-0 p-4 text-sm",
+          "dark:!bg-[var(--codeblock)] dark:!text-[var(--shiki-dark)] m-0 w-max min-w-full p-4 text-sm",
           className
         )}
         style={preStyle}
@@ -411,8 +411,19 @@ export const CodeBlockContent = ({
     };
   }, [code, language, rawTokens]);
 
+  const viewportStyle = useMemo(
+    () => ({
+      backgroundColor: tokenized.bg,
+      color: tokenized.fg,
+    }),
+    [tokenized.bg, tokenized.fg]
+  );
+
   return (
-    <div className="relative overflow-auto">
+    <div
+      className="relative overflow-auto dark:!bg-[var(--codeblock)]"
+      style={viewportStyle}
+    >
       <CodeBlockBody showLineNumbers={showLineNumbers} tokenized={tokenized} />
     </div>
   );
