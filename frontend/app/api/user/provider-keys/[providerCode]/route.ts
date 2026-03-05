@@ -1,13 +1,36 @@
 import { NextRequest } from "next/server"
 
 const BACKEND_URL = process.env.BACKEND_URL ?? "http://127.0.0.1:8000"
-const ALLOWED_PROVIDER_CODES = new Set(["openai", "anthropic", "gemini", "groq", "other"])
+const ALLOWED_PROVIDER_CODES = new Set(["openai", "anthropic", "gemini", "groq", "xai", "openrouter", "other"])
 
 type UpsertProviderKeyBody = {
   apiKey?: string
   keyName?: string
   isDefault?: boolean
   isActive?: boolean
+}
+
+const parseUpstreamError = async (response: Response, fallback: string) => {
+  try {
+    const payload = (await response.json()) as {
+      detail?: string | { detail?: string }
+      error?: string
+    }
+    const detail =
+      typeof payload.detail === "string"
+        ? payload.detail
+        : typeof payload.detail?.detail === "string"
+          ? payload.detail.detail
+          : null
+    return (payload.error ?? detail ?? fallback).trim()
+  } catch {
+    try {
+      const errorText = (await response.text()).trim()
+      return errorText || fallback
+    } catch {
+      return fallback
+    }
+  }
 }
 
 export async function PUT(
@@ -56,9 +79,8 @@ export async function PUT(
     })
 
     if (!upstreamResponse.ok) {
-      const errorText = await upstreamResponse.text()
       return Response.json(
-        { error: errorText || "Backend provider key upsert failed." },
+        { error: await parseUpstreamError(upstreamResponse, "Backend provider key upsert failed.") },
         { status: upstreamResponse.status || 502 }
       )
     }

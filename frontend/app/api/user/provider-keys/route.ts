@@ -1,5 +1,28 @@
 const BACKEND_URL = process.env.BACKEND_URL ?? "http://127.0.0.1:8000"
 
+const parseUpstreamError = async (response: Response, fallback: string) => {
+  try {
+    const payload = (await response.json()) as {
+      detail?: string | { detail?: string }
+      error?: string
+    }
+    const detail =
+      typeof payload.detail === "string"
+        ? payload.detail
+        : typeof payload.detail?.detail === "string"
+          ? payload.detail.detail
+          : null
+    return (payload.error ?? detail ?? fallback).trim()
+  } catch {
+    try {
+      const errorText = (await response.text()).trim()
+      return errorText || fallback
+    } catch {
+      return fallback
+    }
+  }
+}
+
 export async function GET() {
   const backendEndpoint = new URL("/users/dev/current/settings/api-keys", BACKEND_URL)
 
@@ -11,9 +34,8 @@ export async function GET() {
     })
 
     if (!upstreamResponse.ok) {
-      const errorText = await upstreamResponse.text()
       return Response.json(
-        { error: errorText || "Backend provider keys request failed." },
+        { error: await parseUpstreamError(upstreamResponse, "Backend provider keys request failed.") },
         { status: upstreamResponse.status || 502 }
       )
     }

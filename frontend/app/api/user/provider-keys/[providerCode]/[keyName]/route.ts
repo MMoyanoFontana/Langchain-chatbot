@@ -1,11 +1,34 @@
 const BACKEND_URL = process.env.BACKEND_URL ?? "http://127.0.0.1:8000"
-const ALLOWED_PROVIDER_CODES = new Set(["openai", "anthropic", "gemini", "groq", "other"])
+const ALLOWED_PROVIDER_CODES = new Set(["openai", "anthropic", "gemini", "groq", "xai", "openrouter", "other"])
 
 type ProviderApiKeyRead = {
   id: string
   key_name: string
   provider: {
     code: string
+  }
+}
+
+const parseUpstreamError = async (response: Response, fallback: string) => {
+  try {
+    const payload = (await response.json()) as {
+      detail?: string | { detail?: string }
+      error?: string
+    }
+    const detail =
+      typeof payload.detail === "string"
+        ? payload.detail
+        : typeof payload.detail?.detail === "string"
+          ? payload.detail.detail
+          : null
+    return (payload.error ?? detail ?? fallback).trim()
+  } catch {
+    try {
+      const errorText = (await response.text()).trim()
+      return errorText || fallback
+    } catch {
+      return fallback
+    }
   }
 }
 
@@ -28,9 +51,8 @@ export async function DELETE(
     })
 
     if (!listResponse.ok) {
-      const errorText = await listResponse.text()
       return Response.json(
-        { error: errorText || "Backend provider keys request failed." },
+        { error: await parseUpstreamError(listResponse, "Backend provider keys request failed.") },
         { status: listResponse.status || 502 }
       )
     }
@@ -57,9 +79,8 @@ export async function DELETE(
     })
 
     if (!deleteResponse.ok) {
-      const errorText = await deleteResponse.text()
       return Response.json(
-        { error: errorText || "Backend provider key delete failed." },
+        { error: await parseUpstreamError(deleteResponse, "Backend provider key delete failed.") },
         { status: deleteResponse.status || 502 }
       )
     }

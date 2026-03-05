@@ -5,16 +5,45 @@ const BACKEND_URL = process.env.BACKEND_URL ?? "http://127.0.0.1:8000";
 type ChatRequestBody = {
   prompt?: string;
   threadId?: string;
+  modelId?: string;
+  providerCode?: string;
+};
+
+const parseUpstreamError = async (response: Response, fallback: string) => {
+  try {
+    const payload = (await response.json()) as {
+      detail?: string | { detail?: string };
+      error?: string;
+    };
+    const detail =
+      typeof payload.detail === "string"
+        ? payload.detail
+        : typeof payload.detail?.detail === "string"
+          ? payload.detail.detail
+          : null;
+    return (payload.error ?? detail ?? fallback).trim();
+  } catch {
+    try {
+      const errorText = (await response.text()).trim();
+      return errorText || fallback;
+    } catch {
+      return fallback;
+    }
+  }
 };
 
 export async function POST(request: NextRequest) {
   let prompt = "";
   let threadId = "";
+  let modelId = "";
+  let providerCode = "";
 
   try {
     const body = (await request.json()) as ChatRequestBody;
     prompt = body.prompt?.trim() ?? "";
     threadId = body.threadId?.trim() ?? "";
+    modelId = body.modelId?.trim() ?? "";
+    providerCode = body.providerCode?.trim().toLowerCase() ?? "";
   } catch {
     return Response.json({ error: "Invalid request body." }, { status: 400 });
   }
@@ -22,23 +51,37 @@ export async function POST(request: NextRequest) {
   if (!prompt) {
     return Response.json({ error: "Prompt is required." }, { status: 400 });
   }
+  if (!modelId) {
+    return Response.json({ error: "Model is required." }, { status: 400 });
+  }
+  if (!providerCode) {
+    return Response.json({ error: "Provider code is required." }, { status: 400 });
+  }
 
   const backendEndpoint = new URL("/chat", BACKEND_URL);
-  backendEndpoint.searchParams.set("prompt", prompt);
+  const payload: {
+    prompt: string;
+    thread_id?: string;
+    model_id: string;
+    provider_code: string;
+  } = { prompt, model_id: modelId, provider_code: providerCode };
   if (threadId) {
-    backendEndpoint.searchParams.set("thread_id", threadId);
+    payload.thread_id = threadId;
   }
 
   try {
     const upstreamResponse = await fetch(backendEndpoint, {
-      headers: { Accept: "text/plain" },
-      method: "GET",
+      headers: {
+        Accept: "text/plain",
+        "Content-Type": "application/json",
+      },
+      method: "POST",
+      body: JSON.stringify(payload),
     });
 
     if (!upstreamResponse.ok || !upstreamResponse.body) {
-      const errorText = await upstreamResponse.text();
       return Response.json(
-        { error: errorText || "Backend chat request failed." },
+        { error: await parseUpstreamError(upstreamResponse, "Backend chat request failed.") },
         { status: upstreamResponse.status || 502 }
       );
     }
