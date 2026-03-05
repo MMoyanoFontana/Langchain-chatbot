@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Temporary: tracked upstream ai-elements package has incompatible lint rules.
+    "components/ai-elements/**",
   ]),
 ]);
 
