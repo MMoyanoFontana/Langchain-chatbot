@@ -11,6 +11,8 @@ type ChatPageProps = {
 type ThreadMessageResponse = {
     role: string;
     content: string;
+    provider_code?: string | null;
+    model_name?: string | null;
 };
 
 type ThreadResponse = {
@@ -25,6 +27,21 @@ const toConversationRole = (role: string): ConversationMessage["role"] => {
         return role;
     }
     return "assistant";
+};
+
+const toProviderCode = (providerCode: string | null | undefined): ConversationMessage["providerCode"] => {
+    if (
+        providerCode === "openai" ||
+        providerCode === "anthropic" ||
+        providerCode === "gemini" ||
+        providerCode === "groq" ||
+        providerCode === "xai" ||
+        providerCode === "openrouter" ||
+        providerCode === "other"
+    ) {
+        return providerCode;
+    }
+    return undefined;
 };
 
 export default async function ChatPage({ params }: ChatPageProps) {
@@ -43,6 +60,8 @@ export default async function ChatPage({ params }: ChatPageProps) {
     const initialMessages: ConversationMessage[] = thread.messages.map((message) => ({
         role: toConversationRole(message.role),
         content: message.content,
+        providerCode: toProviderCode(message.provider_code),
+        modelName: message.model_name ?? null,
     }));
 
     return <ChatSession initialMessages={initialMessages} initialThreadId={thread.id} />;

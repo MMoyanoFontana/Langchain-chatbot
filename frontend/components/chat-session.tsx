@@ -9,10 +9,12 @@ import {
   ConversationScrollButton,
 } from "@/components/ai-elements/conversation";
 import type { ConversationMessage } from "@/components/ai-elements/conversation";
+import { ModelSelectorLogo } from "@/components/ai-elements/model-selector";
 import { Message, MessageContent, MessageResponse } from "@/components/ai-elements/message";
 import PromptComposer from "@/components/prompt-composer";
+import { ServerIcon } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 const buildMessageText = (message: PromptInputMessage) => {
   const text = message.text?.trim() ?? "";
@@ -34,9 +36,35 @@ interface ChatSessionProps {
   initialThreadId?: string;
 }
 
+const toProviderLogo = (providerCode: NonNullable<ConversationMessage["providerCode"]>) => {
+  if (providerCode === "gemini") {
+    return "google";
+  }
+  return providerCode;
+};
+
+const getLastUsedModelId = (messages?: ConversationMessage[]): string | null => {
+  if (!messages?.length) {
+    return null;
+  }
+
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const modelName = messages[index].modelName?.trim();
+    if (modelName) {
+      return modelName;
+    }
+  }
+
+  return null;
+};
+
 const ChatSession = ({ initialMessages, initialThreadId }: ChatSessionProps) => {
   const router = useRouter();
   const pathname = usePathname();
+  const preferredModelId = useMemo(
+    () => getLastUsedModelId(initialMessages),
+    [initialMessages]
+  );
   const [messages, setMessages] = useState<ConversationMessage[]>(() => initialMessages ?? []);
   const [threadId, setThreadId] = useState<string | null>(() => initialThreadId ?? null);
 
@@ -64,8 +92,12 @@ const ChatSession = ({ initialMessages, initialThreadId }: ChatSessionProps) => 
     });
   }, []);
 
-  const handleSubmitMessage = useCallback(async (message: PromptInputMessage) => {
-    const userContent = buildMessageText(message);
+  const handleSubmitMessage = useCallback(async (payload: {
+    message: PromptInputMessage;
+    modelId: string;
+    providerCode: NonNullable<ConversationMessage["providerCode"]>;
+  }) => {
+    const userContent = buildMessageText(payload.message);
 
     if (!userContent) {
       return;
@@ -77,13 +109,23 @@ const ChatSession = ({ initialMessages, initialThreadId }: ChatSessionProps) => 
       { role: "user", content: userContent },
       (() => {
         assistantMessageIndex = prev.length + 1;
-        return { role: "assistant" as const, content: "" };
+        return {
+          role: "assistant" as const,
+          content: "",
+          providerCode: payload.providerCode,
+          modelName: payload.modelId,
+        };
       })(),
     ]);
 
     try {
       const response = await fetch("/api/chat", {
-        body: JSON.stringify({ prompt: userContent, threadId }),
+        body: JSON.stringify({
+          prompt: userContent,
+          threadId,
+          modelId: payload.modelId,
+          providerCode: payload.providerCode,
+        }),
         headers: { "Content-Type": "application/json" },
         method: "POST",
       });
@@ -156,12 +198,38 @@ const ChatSession = ({ initialMessages, initialThreadId }: ChatSessionProps) => 
                   : message.role === "system"
                     ? "system"
                     : "assistant";
+              const metaText = message.modelName
+                  ? message.modelName
+                  : null;
 
               return (
                 <Message from={from} key={`${index}-${message.role}`}>
-                  <MessageContent>
-                    <MessageResponse>{message.content}</MessageResponse>
-                  </MessageContent>
+                  {from === "assistant" ? (
+                    <div className="flex items-start gap-2.5">
+                      <div className="bg-muted/40 border-border mt-0.5 flex size-8 shrink-0 items-center justify-center overflow-hidden rounded-full border">
+                        {message.providerCode && message.providerCode !== "other" ? (
+                          <ModelSelectorLogo
+                            provider={toProviderLogo(message.providerCode)}
+                            className="size-5"
+                          />
+                        ) : (
+                          <ServerIcon className="text-muted-foreground size-5" />
+                        )}
+                      </div>
+                      <MessageContent>
+                        {metaText ? (
+                          <div className="text-muted-foreground mb-1 text-xs">
+                            {metaText}
+                          </div>
+                        ) : null}
+                        <MessageResponse>{message.content}</MessageResponse>
+                      </MessageContent>
+                    </div>
+                  ) : (
+                    <MessageContent>
+                      <MessageResponse>{message.content}</MessageResponse>
+                    </MessageContent>
+                  )}
                 </Message>
               );
             })
@@ -170,7 +238,11 @@ const ChatSession = ({ initialMessages, initialThreadId }: ChatSessionProps) => 
         <ConversationScrollButton />
       </Conversation>
       <div className="p-4">
-        <PromptComposer className="mx-auto w-full max-w-4xl" onSubmitMessage={handleSubmitMessage} />
+        <PromptComposer
+          className="mx-auto w-full max-w-4xl"
+          preferredModelId={preferredModelId}
+          onSubmitMessage={handleSubmitMessage}
+        />
       </div>
     </div>
   );

@@ -103,6 +103,8 @@ export const ConversationScrollButton = ({
 export interface ConversationMessage {
   role: "user" | "assistant" | "system" | "data" | "tool";
   content: string;
+  providerCode?: "openai" | "anthropic" | "gemini" | "groq" | "xai" | "openrouter" | "other";
+  modelName?: string | null;
 }
 
 export type ConversationDownloadProps = Omit<

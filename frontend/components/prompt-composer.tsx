@@ -36,6 +36,8 @@ import {
     PromptInputTools,
     usePromptInputAttachments,
 } from "@/components/ai-elements/prompt-input";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { CheckIcon, ChevronDown, ChevronRight } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
 
@@ -45,6 +47,15 @@ interface CatalogProvider {
     display_name: string;
     is_active: boolean;
 }
+
+type BackendProviderCode =
+    | "openai"
+    | "anthropic"
+    | "gemini"
+    | "groq"
+    | "xai"
+    | "openrouter"
+    | "other";
 
 interface CatalogModelResponse {
     id: number;
@@ -59,11 +70,13 @@ interface ComposerModel {
     name: string;
     providerLabel: string;
     providerSlug: string;
+    providerCode: BackendProviderCode;
 }
 
 interface ProviderModelGroup {
     providerLabel: string;
     providerSlug: string;
+    providerCode: BackendProviderCode;
     models: ComposerModel[];
 }
 
@@ -76,15 +89,31 @@ const PROVIDER_LOGO_MAP: Record<string, string> = {
 
 const FALLBACK_MODELS: ComposerModel[] = [
     {
-        id: "gpt-4o",
-        name: "GPT-4o",
+        id: "gpt-5.2",
+        name: "GPT-5.2",
         providerLabel: "OpenAI",
         providerSlug: "openai",
+        providerCode: "openai",
     },
 ];
 
 const normalizeProviderSlug = (providerCode: string): string =>
     PROVIDER_LOGO_MAP[providerCode] ?? providerCode;
+
+const normalizeProviderCode = (providerCode: string): BackendProviderCode => {
+    if (
+        providerCode === "openai" ||
+        providerCode === "anthropic" ||
+        providerCode === "gemini" ||
+        providerCode === "groq" ||
+        providerCode === "xai" ||
+        providerCode === "openrouter" ||
+        providerCode === "other"
+    ) {
+        return providerCode;
+    }
+    return "other";
+};
 
 const mapCatalogModelToComposerModel = (
     catalogModel: CatalogModelResponse
@@ -96,11 +125,36 @@ const mapCatalogModelToComposerModel = (
         name: catalogModel.display_name,
         providerLabel: catalogModel.provider.display_name,
         providerSlug,
+        providerCode: normalizeProviderCode(catalogModel.provider.code),
     };
 };
 
 const SUBMITTING_TIMEOUT = 200;
 const STREAMING_TIMEOUT = 2000;
+const SELECTED_MODEL_STORAGE_KEY = "langchain-chatbot.selected-model.v1";
+
+const readStoredSelectedModel = (): string | null => {
+    if (typeof window === "undefined") {
+        return null;
+    }
+    try {
+        const storedValue = window.localStorage.getItem(SELECTED_MODEL_STORAGE_KEY);
+        return storedValue?.trim() || null;
+    } catch {
+        return null;
+    }
+};
+
+const persistSelectedModel = (modelId: string) => {
+    if (typeof window === "undefined") {
+        return;
+    }
+    try {
+        window.localStorage.setItem(SELECTED_MODEL_STORAGE_KEY, modelId);
+    } catch {
+        // Ignore storage errors.
+    }
+};
 
 interface AttachmentItemProps {
     attachment: Extract<AttachmentData, { type: "file" }>;
@@ -126,14 +180,21 @@ interface ModelItemProps {
     m: ComposerModel;
     selectedModel: string;
     onSelect: (id: string) => void;
+    disabled?: boolean;
     className?: string;
 }
 
-const ModelItem = memo(({ m, selectedModel, onSelect, className }: ModelItemProps) => {
-    const handleSelect = useCallback(() => onSelect(m.id), [onSelect, m.id]);
+const ModelItem = memo(({ m, selectedModel, onSelect, disabled, className }: ModelItemProps) => {
+    const handleSelect = useCallback(() => {
+        if (disabled) {
+            return;
+        }
+        onSelect(m.id);
+    }, [disabled, onSelect, m.id]);
     return (
         <ModelSelectorItem
             className={className}
+            disabled={disabled}
             key={m.id}
             onSelect={handleSelect}
             value={m.id}
@@ -177,14 +238,47 @@ const PromptInputAttachmentsDisplay = () => {
 
 interface PromptComposerProps {
     className?: string;
-    onSubmitMessage?: (message: PromptInputMessage) => void | Promise<void>;
+    preferredModelId?: string | null;
+    onSubmitMessage?: (payload: {
+        message: PromptInputMessage;
+        modelId: string;
+        providerCode: BackendProviderCode;
+    }) => void | Promise<void>;
 }
 
-const PromptComposer = ({ className, onSubmitMessage }: PromptComposerProps) => {
+interface ProviderApiKeyResponse {
+    provider?: {
+        code?: string;
+    };
+    is_active?: boolean;
+}
+
+const DEFAULT_MODEL_ID = FALLBACK_MODELS[0].id;
+
+const normalizeModelId = (value: string | null | undefined): string | null => {
+    const normalized = value?.trim();
+    return normalized || null;
+};
+
+const resolveDefaultModelId = (models: ComposerModel[]): string => {
+    if (models.some((entry) => entry.id === DEFAULT_MODEL_ID)) {
+        return DEFAULT_MODEL_ID;
+    }
+    return models[0]?.id ?? DEFAULT_MODEL_ID;
+};
+
+const PromptComposer = ({ className, preferredModelId, onSubmitMessage }: PromptComposerProps) => {
+    const normalizedPreferredModelId = normalizeModelId(preferredModelId);
     const [availableModels, setAvailableModels] = useState<ComposerModel[]>(FALLBACK_MODELS);
-    const [model, setModel] = useState<string>(FALLBACK_MODELS[0].id);
+    const [model, setModel] = useState<string>(
+        () =>
+            normalizedPreferredModelId ??
+            readStoredSelectedModel() ??
+            DEFAULT_MODEL_ID
+    );
     const [modelSelectorOpen, setModelSelectorOpen] = useState(false);
     const [collapsedProviders, setCollapsedProviders] = useState<Set<string>>(new Set());
+    const [connectedProviderCodes, setConnectedProviderCodes] = useState<Set<BackendProviderCode>>(new Set());
     const [modelsLoading, setModelsLoading] = useState(true);
     const [status, setStatus] = useState<
         "submitted" | "streaming" | "ready" | "error"
@@ -209,7 +303,9 @@ const PromptComposer = ({ className, onSubmitMessage }: PromptComposerProps) => 
 
                 if (mappedModels.length === 0) {
                     setAvailableModels(FALLBACK_MODELS);
-                    setModel(FALLBACK_MODELS[0].id);
+                    setModel((previous) =>
+                        previous === DEFAULT_MODEL_ID ? previous : DEFAULT_MODEL_ID
+                    );
                     return;
                 }
 
@@ -217,12 +313,14 @@ const PromptComposer = ({ className, onSubmitMessage }: PromptComposerProps) => 
                 setModel((previous) =>
                     mappedModels.some((entry) => entry.id === previous)
                         ? previous
-                        : mappedModels[0].id
+                        : resolveDefaultModelId(mappedModels)
                 );
             } catch {
                 if (!isCancelled) {
                     setAvailableModels(FALLBACK_MODELS);
-                    setModel(FALLBACK_MODELS[0].id);
+                    setModel((previous) =>
+                        previous === DEFAULT_MODEL_ID ? previous : DEFAULT_MODEL_ID
+                    );
                 }
             } finally {
                 if (!isCancelled) {
@@ -238,7 +336,88 @@ const PromptComposer = ({ className, onSubmitMessage }: PromptComposerProps) => 
         };
     }, []);
 
-    const selectedModelData = availableModels.find((entry) => entry.id === model);
+    useEffect(() => {
+        if (!normalizedPreferredModelId) {
+            return;
+        }
+
+        setModel((previous) =>
+            previous === normalizedPreferredModelId ? previous : normalizedPreferredModelId
+        );
+    }, [normalizedPreferredModelId]);
+
+    useEffect(() => {
+        let isCancelled = false;
+
+        const loadProviderKeys = async () => {
+            try {
+                const response = await fetch("/api/user/provider-keys", { cache: "no-store" });
+                if (!response.ok) {
+                    throw new Error(`Provider keys request failed with status ${response.status}`);
+                }
+
+                const payload = (await response.json()) as ProviderApiKeyResponse[];
+                if (isCancelled) {
+                    return;
+                }
+
+                const connectedCodes = new Set<BackendProviderCode>();
+                for (const entry of payload) {
+                    if (entry.is_active === false) {
+                        continue;
+                    }
+                    const providerCode = normalizeProviderCode(
+                        entry.provider?.code?.toLowerCase() ?? ""
+                    );
+                    connectedCodes.add(providerCode);
+                }
+
+                setConnectedProviderCodes(connectedCodes);
+            } catch {
+                if (!isCancelled) {
+                    setConnectedProviderCodes(new Set());
+                }
+            }
+        };
+
+        void loadProviderKeys();
+
+        return () => {
+            isCancelled = true;
+        };
+    }, []);
+
+    useEffect(() => {
+        if (modelsLoading) {
+            return;
+        }
+
+        setModel((previous) => {
+            const selectedModel = availableModels.find((entry) => entry.id === previous);
+            if (selectedModel && connectedProviderCodes.has(selectedModel.providerCode)) {
+                return previous;
+            }
+
+            const firstConnectedModel = availableModels.find((entry) =>
+                connectedProviderCodes.has(entry.providerCode)
+            );
+            if (firstConnectedModel) {
+                return firstConnectedModel.id;
+            }
+
+            return selectedModel?.id ?? resolveDefaultModelId(availableModels);
+        });
+    }, [availableModels, connectedProviderCodes, modelsLoading]);
+
+    useEffect(() => {
+        if (!model) {
+            return;
+        }
+        persistSelectedModel(model);
+    }, [model]);
+
+    const selectedModelData =
+        availableModels.find((entry) => entry.id === model) ?? FALLBACK_MODELS[0];
 
     const modelsByProvider = useMemo(() => {
         const grouped = new Map<string, ProviderModelGroup>();
@@ -251,16 +430,25 @@ const PromptComposer = ({ className, onSubmitMessage }: PromptComposerProps) => 
                 grouped.set(entry.providerLabel, {
                     providerLabel: entry.providerLabel,
                     providerSlug: entry.providerSlug,
+                    providerCode: entry.providerCode,
                     models: [entry],
                 });
             }
         }
 
-        return Array.from(grouped.values());
-    }, [availableModels]);
+        return Array.from(grouped.values()).sort((a, b) => {
+            const aConnected = connectedProviderCodes.has(a.providerCode);
+            const bConnected = connectedProviderCodes.has(b.providerCode);
+            if (aConnected === bConnected) {
+                return a.providerLabel.localeCompare(b.providerLabel);
+            }
+            return aConnected ? -1 : 1;
+        });
+    }, [availableModels, connectedProviderCodes]);
 
     const handleModelSelect = useCallback((id: string) => {
         setModel(id);
+        persistSelectedModel(id);
         setModelSelectorOpen(false);
     }, []);
 
@@ -287,7 +475,11 @@ const PromptComposer = ({ className, onSubmitMessage }: PromptComposerProps) => 
         setStatus("submitted");
         setStatus("streaming");
 
-        const submitPromise = onSubmitMessage?.(message);
+        const submitPromise = onSubmitMessage?.({
+            message,
+            modelId: selectedModelData.id,
+            providerCode: selectedModelData.providerCode,
+        });
         if (submitPromise instanceof Promise) {
             submitPromise
                 .then(() => {
@@ -307,7 +499,7 @@ const PromptComposer = ({ className, onSubmitMessage }: PromptComposerProps) => 
         setTimeout(() => {
             setStatus("ready");
         }, SUBMITTING_TIMEOUT + STREAMING_TIMEOUT);
-    }, [onSubmitMessage]);
+    }, [onSubmitMessage, selectedModelData.id, selectedModelData.providerCode]);
 
     return (
         <div className={className ?? "size-full"}>
@@ -334,15 +526,24 @@ const PromptComposer = ({ className, onSubmitMessage }: PromptComposerProps) => 
                             >
                                 <ModelSelectorTrigger
                                     render={
-                                        <PromptInputButton>
-                                            {selectedModelData?.providerSlug && (
-                                                <ModelSelectorLogo
-                                                    provider={selectedModelData.providerSlug}
-                                                />
+                                        <PromptInputButton disabled={modelsLoading} size="sm">
+                                            {modelsLoading ? (
+                                                <>
+                                                    <Skeleton className="size-4 rounded-full" />
+                                                    <Skeleton className="h-4 w-24" />
+                                                </>
+                                            ) : (
+                                                <>
+                                                    {selectedModelData?.providerSlug && (
+                                                        <ModelSelectorLogo
+                                                            provider={selectedModelData.providerSlug}
+                                                        />
+                                                    )}
+                                                    <ModelSelectorName>
+                                                        {selectedModelData?.name ?? "Select model"}
+                                                    </ModelSelectorName>
+                                                </>
                                             )}
-                                            <ModelSelectorName>
-                                                {selectedModelData?.name ?? "Select model"}
-                                            </ModelSelectorName>
                                         </PromptInputButton>
                                     }
                                 />
@@ -354,34 +555,60 @@ const PromptComposer = ({ className, onSubmitMessage }: PromptComposerProps) => 
                                         </ModelSelectorEmpty>
                                         {modelsByProvider.map((group) => {
                                             const groupKey = getProviderGroupKey(group);
-                                            const isCollapsed = collapsedProviders.has(groupKey);
+                                            const providerConnected = connectedProviderCodes.has(group.providerCode);
+                                            const isCollapsed = providerConnected
+                                                ? collapsedProviders.has(groupKey)
+                                                : true;
 
                                             return (
                                                 <ModelSelectorGroup
                                                     heading={
-                                                        <button
-                                                            aria-label={`Toggle ${group.providerLabel} models`}
-                                                            className="inline-flex w-full cursor-pointer items-center gap-2 rounded-sm px-1 py-0.5 text-left text-sm font-semibold transition-colors hover:bg-muted"
-                                                            onClick={() => toggleProviderGroup(groupKey)}
-                                                            type="button"
-                                                        >
-                                                            {isCollapsed ? (
-                                                                <ChevronRight className="size-4" />
-                                                            ) : (
-                                                                <ChevronDown className="size-4" />
-                                                            )}
-                                                            <ModelSelectorLogo
-                                                                className="size-4"
-                                                                provider={group.providerSlug}
-                                                            />
-                                                            <span>{group.providerLabel}</span>
-                                                        </button>
+                                                        providerConnected ? (
+                                                            <button
+                                                                aria-label={`Toggle ${group.providerLabel} models`}
+                                                                className="inline-flex w-full cursor-pointer items-center gap-2 rounded-sm px-1 py-0.5 text-left text-sm font-semibold text-foreground transition-colors hover:bg-muted"
+                                                                onClick={() => toggleProviderGroup(groupKey)}
+                                                                type="button"
+                                                            >
+                                                                {isCollapsed ? (
+                                                                    <ChevronRight className="size-4" />
+                                                                ) : (
+                                                                    <ChevronDown className="size-4" />
+                                                                )}
+                                                                <ModelSelectorLogo
+                                                                    className="size-4"
+                                                                    provider={group.providerSlug}
+                                                                />
+                                                                <span>{group.providerLabel}</span>
+                                                            </button>
+                                                        ) : (
+                                                            <Tooltip>
+                                                                <TooltipTrigger>
+                                                                    <div
+                                                                        aria-label={`${group.providerLabel} not connected`}
+                                                                        className="inline-flex w-full cursor-default items-center gap-2 rounded-sm px-1 py-0.5 text-left text-sm font-semibold text-muted-foreground/70"
+                                                                        role="note"
+                                                                    >
+                                                                        <ChevronRight className="size-4" />
+                                                                        <ModelSelectorLogo
+                                                                            className="size-4 opacity-70"
+                                                                            provider={group.providerSlug}
+                                                                        />
+                                                                        <span>{group.providerLabel}</span>
+                                                                    </div>
+                                                                </TooltipTrigger>
+                                                                <TooltipContent side="right">
+                                                                    Not connected. Add API key in Settings.
+                                                                </TooltipContent>
+                                                            </Tooltip>
+                                                        )
                                                     }
                                                     key={groupKey}
                                                 >
                                                     {group.models.map((entry) => (
                                                         <ModelItem
                                                             className={isCollapsed ? "hidden" : undefined}
+                                                            disabled={!providerConnected}
                                                             key={entry.id}
                                                             m={entry}
                                                             onSelect={handleModelSelect}
