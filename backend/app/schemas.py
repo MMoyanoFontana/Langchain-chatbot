@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
+from app.constants import CHAT_THREAD_TITLE_MAX_LENGTH
 from app.models import MessageRole, ProviderCode
 
 
@@ -80,12 +81,29 @@ class ProviderModelRead(BaseModel):
     provider: ProviderRead
 
 
+class ChatRequest(BaseModel):
+    prompt: str = Field(min_length=1)
+    thread_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("thread_id", "threadId"),
+    )
+    model_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("model_id", "modelId"),
+    )
+    provider_code: ProviderCode | None = Field(
+        default=None,
+        validation_alias=AliasChoices("provider_code", "providerCode"),
+    )
+
+
 class ChatMessageRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
     role: MessageRole
     content: str
+    provider_code: ProviderCode | None = None
     model_name: str | None
     created_at: datetime
 
@@ -110,4 +128,4 @@ class ChatThreadRead(BaseModel):
 
 
 class ChatThreadUpdate(BaseModel):
-    title: str = Field(min_length=1, max_length=200)
+    title: str = Field(min_length=1, max_length=CHAT_THREAD_TITLE_MAX_LENGTH)
