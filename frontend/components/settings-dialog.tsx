@@ -52,7 +52,14 @@ type NavItem = {
 type SettingsTab = "profile" | "providers" | "general"
 type ThemeMode = "light" | "dark" | "system"
 type Language = "en" | "es"
-type BackendProviderCode = "openai" | "anthropic" | "gemini" | "groq" | "other"
+type BackendProviderCode =
+  | "openai"
+  | "anthropic"
+  | "gemini"
+  | "groq"
+  | "xai"
+  | "openrouter"
+  | "other"
 
 type ProviderOption = {
   id: string
@@ -117,17 +124,19 @@ const PROVIDER_OPTIONS: ProviderOption[] = [
     providerCode: "gemini",
   },
   { id: "groq", name: "Groq", logo: "groq", inputType: "api-key", providerCode: "groq" },
+  { id: "xai", name: "xAI", logo: "xai", inputType: "api-key", providerCode: "xai" },
+  {
+    id: "openrouter",
+    name: "OpenRouter",
+    logo: "openrouter",
+    inputType: "api-key",
+    providerCode: "openrouter",
+  },
   {
     id: "mistral",
     name: "Mistral",
     logo: "mistral",
     inputType: "api-key",
-    providerCode: "other",
-  },
-  {
-    id: "ollama",
-    name: "Ollama (Local)",
-    inputType: "endpoint",
     providerCode: "other",
   },
 ]
@@ -180,7 +189,7 @@ const nav: NavItem[] = [
   {
     id: "providers",
     name: "Providers",
-    description: "Add API keys for cloud providers or connect local Ollama.",
+    description: "Add API keys for cloud providers.",
     icon: KeyRound,
   },
 ]
@@ -194,6 +203,42 @@ const normalizeOllamaEndpoint = (value: string) => {
     return trimmed
   }
   return `http://${trimmed}`
+}
+
+const parseApiError = async (response: Response, fallback: string) => {
+  try {
+    const payload = (await response.json()) as {
+      error?: string
+      detail?: string | { detail?: string }
+    }
+
+    const detail =
+      typeof payload.detail === "string"
+        ? payload.detail
+        : typeof payload.detail?.detail === "string"
+          ? payload.detail.detail
+          : null
+
+    return (payload.error ?? detail ?? fallback).trim()
+  } catch {
+    try {
+      const text = (await response.text()).trim()
+      return text || fallback
+    } catch {
+      return fallback
+    }
+  }
+}
+
+const MASKED_KEY_DISPLAY_THRESHOLD = 16
+const MASKED_KEY_TAIL_CHARS = 4
+
+const formatMaskedKeyPreview = (maskedValue: string) => {
+  const normalized = maskedValue.trim()
+  if (normalized.length <= MASKED_KEY_DISPLAY_THRESHOLD) {
+    return normalized
+  }
+  return `…${normalized.slice(-MASKED_KEY_TAIL_CHARS)}`
 }
 
 export function SettingsDialog({
@@ -212,6 +257,8 @@ export function SettingsDialog({
   const [language, setLanguage] = React.useState<Language>("en")
   const [providers, setProviders] = React.useState<ProviderConnection[]>([])
   const [providerDrafts, setProviderDrafts] = React.useState<Record<string, string>>({})
+  const [providerError, setProviderError] = React.useState<string | null>(null)
+  const [providerActionLoadingId, setProviderActionLoadingId] = React.useState<string | null>(null)
   const [storageReady, setStorageReady] = React.useState(false)
   const [profileReady, setProfileReady] = React.useState(false)
   const [deleteDialogOpen, setDeleteDialogOpen] = React.useState(false)
@@ -247,9 +294,11 @@ export function SettingsDialog({
       setProfileReady(true)
     }
 
+    setProviderError(null)
     try {
       const keysResponse = await fetch("/api/user/provider-keys", { cache: "no-store" })
       if (!keysResponse.ok) {
+        setProviderError(await parseApiError(keysResponse, "Could not load provider settings."))
         return
       }
 
@@ -275,7 +324,7 @@ export function SettingsDialog({
 
       setProviders(mappedProviders)
     } catch {
-      // Ignore provider key bootstrap errors and keep empty state.
+      setProviderError("Could not load provider settings.")
     }
   }, [])
 
@@ -325,6 +374,10 @@ export function SettingsDialog({
   }, [displayName, email, profileReady])
 
   const addProviderKey = async (provider: ProviderOption) => {
+    if (providerActionLoadingId) {
+      return
+    }
+
     const trimmed = (providerDrafts[provider.id] ?? "").trim()
     if (!trimmed) {
       return
@@ -339,6 +392,8 @@ export function SettingsDialog({
       return
     }
 
+    setProviderActionLoadingId(provider.id)
+    setProviderError(null)
     try {
       const response = await fetch(`/api/user/provider-keys/${provider.providerCode}`, {
         method: "PUT",
@@ -352,7 +407,7 @@ export function SettingsDialog({
       })
 
       if (!response.ok) {
-        return
+        throw new Error(await parseApiError(response, "Could not save provider key."))
       }
 
       const stored = (await response.json()) as ProviderApiKeyResponse
@@ -368,22 +423,39 @@ export function SettingsDialog({
         return [nextKey, ...withoutCurrent]
       })
       setProviderDrafts((previous) => ({ ...previous, [provider.id]: "" }))
-    } catch {
-      // Keep existing state if backend request fails.
+    } catch (error) {
+      setProviderError(
+        error instanceof Error ? error.message : "Could not save provider key."
+      )
+    } finally {
+      setProviderActionLoadingId(null)
     }
   }
 
   const removeProviderKey = async (provider: ProviderOption) => {
-    try {
-      await fetch(`/api/user/provider-keys/${provider.providerCode}/${provider.id}`, {
-        method: "DELETE",
-      })
-    } catch {
-      // Keep local cleanup even if backend request fails.
+    if (providerActionLoadingId) {
+      return
     }
 
-    setProviders((previous) => previous.filter((entry) => entry.id !== provider.id))
-    setProviderDrafts((previous) => ({ ...previous, [provider.id]: "" }))
+    setProviderActionLoadingId(provider.id)
+    setProviderError(null)
+    try {
+      const response = await fetch(`/api/user/provider-keys/${provider.providerCode}/${provider.id}`, {
+        method: "DELETE",
+      })
+      if (!response.ok) {
+        throw new Error(await parseApiError(response, "Could not delete provider key."))
+      }
+
+      setProviders((previous) => previous.filter((entry) => entry.id !== provider.id))
+      setProviderDrafts((previous) => ({ ...previous, [provider.id]: "" }))
+    } catch (error) {
+      setProviderError(
+        error instanceof Error ? error.message : "Could not delete provider key."
+      )
+    } finally {
+      setProviderActionLoadingId(null)
+    }
   }
 
   const deleteCurrentUser = React.useCallback(async () => {
@@ -458,6 +530,7 @@ export function SettingsDialog({
     }
 
     if (activeTab === "providers") {
+      const isAnyProviderActionLoading = providerActionLoadingId !== null
       const connectedProviders = PROVIDER_OPTIONS.filter((provider) =>
         providers.some((entry) => entry.id === provider.id)
       )
@@ -474,6 +547,9 @@ export function SettingsDialog({
             key={provider.id}
             onSubmit={(event) => {
               event.preventDefault()
+              if (isAnyProviderActionLoading) {
+                return
+              }
               if (!hasSavedKey) {
                 void addProviderKey(provider)
               }
@@ -494,8 +570,11 @@ export function SettingsDialog({
               <span className="text-sm font-medium">{provider.name}</span>
             </div>
             {hasSavedKey ? (
-              <p className="text-muted-foreground bg-muted/30 flex h-8 items-center rounded-lg px-2.5 font-mono text-sm">
-                {existingKey.value}
+              <p
+                className="text-muted-foreground bg-muted/30 flex h-8 items-center rounded-lg px-2.5 font-mono text-sm"
+                title={existingKey.value}
+              >
+                {formatMaskedKeyPreview(existingKey.value)}
               </p>
             ) : (
               <Input
@@ -507,6 +586,7 @@ export function SettingsDialog({
                     : "http://localhost:11434"
                 }
                 value={providerDrafts[provider.id] ?? ""}
+                disabled={isAnyProviderActionLoading}
                 onChange={(event) =>
                   setProviderDrafts((previous) => ({
                     ...previous,
@@ -523,6 +603,7 @@ export function SettingsDialog({
                   size="icon-sm"
                   aria-label="Delete key"
                   title="Delete key"
+                  disabled={isAnyProviderActionLoading}
                   onClick={() => {
                     void removeProviderKey(provider)
                   }}
@@ -536,6 +617,7 @@ export function SettingsDialog({
                   size="icon-sm"
                   aria-label="Save key"
                   title="Save key"
+                  disabled={isAnyProviderActionLoading}
                 >
                   <Save />
                 </Button>
@@ -547,6 +629,9 @@ export function SettingsDialog({
 
       return (
         <section className="max-w-3xl ">
+          {providerError ? (
+            <p className="text-destructive py-2 text-sm">{providerError}</p>
+          ) : null}
           <div className="py-4">
             <h3 className="text-muted-foreground text-xs font-medium uppercase tracking-wide mb-2">
               Connected providers
