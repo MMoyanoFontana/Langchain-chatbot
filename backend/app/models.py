@@ -28,6 +28,8 @@ class ProviderCode(str, enum.Enum):
     GEMINI = "gemini"
     ANTHROPIC = "anthropic"
     GROQ = "groq"
+    XAI = "xai"
+    OPENROUTER = "openrouter"
     OTHER = "other"
 
 
@@ -201,3 +203,9 @@ class ChatMessage(Base):
 
     thread: Mapped["ChatThread"] = relationship(back_populates="messages")
     provider: Mapped["Provider | None"] = relationship(back_populates="messages")
+
+    @property
+    def provider_code(self) -> ProviderCode | None:
+        if self.provider is None:
+            return None
+        return self.provider.code
