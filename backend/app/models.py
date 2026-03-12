@@ -33,6 +33,12 @@ class ProviderCode(str, enum.Enum):
     OTHER = "other"
 
 
+class AuthProvider(str, enum.Enum):
+    GOOGLE = "google"
+    GITHUB = "github"
+    MICROSOFT = "microsoft"
+
+
 class MessageRole(str, enum.Enum):
     SYSTEM = "system"
     USER = "user"
@@ -46,6 +52,8 @@ class User(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     email: Mapped[str] = mapped_column(String(320), unique=True, index=True)
     full_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    avatar_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(
@@ -54,6 +62,14 @@ class User(Base):
         onupdate=utc_now,
     )
 
+    auth_identities: Mapped[list["AuthIdentity"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+    auth_sessions: Mapped[list["AuthSession"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
     provider_api_keys: Mapped[list["ProviderApiKey"]] = relationship(
         back_populates="user",
         cascade="all, delete-orphan",
@@ -83,6 +99,61 @@ class Provider(Base):
         cascade="all, delete-orphan",
     )
     messages: Mapped[list["ChatMessage"]] = relationship(back_populates="provider")
+
+
+class AuthIdentity(Base):
+    __tablename__ = "auth_identities"
+    __table_args__ = (
+        UniqueConstraint(
+            "provider",
+            "provider_subject",
+            name="uq_auth_identity_provider_subject",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        index=True,
+    )
+    provider: Mapped[AuthProvider] = mapped_column(
+        Enum(AuthProvider, name="auth_provider"),
+        index=True,
+    )
+    provider_subject: Mapped[str] = mapped_column(String(255))
+    email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    avatar_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        onupdate=utc_now,
+    )
+
+    user: Mapped["User"] = relationship(back_populates="auth_identities")
+
+
+class AuthSession(Base):
+    __tablename__ = "auth_sessions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        index=True,
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        onupdate=utc_now,
+    )
+    last_used_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    user: Mapped["User"] = relationship(back_populates="auth_sessions")
 
 
 class ProviderApiKey(Base):
