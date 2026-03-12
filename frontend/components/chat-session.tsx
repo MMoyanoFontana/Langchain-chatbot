@@ -13,7 +13,6 @@ import { ModelSelectorLogo } from "@/components/ai-elements/model-selector";
 import { Message, MessageContent, MessageResponse } from "@/components/ai-elements/message";
 import PromptComposer from "@/components/prompt-composer";
 import { ServerIcon } from "lucide-react";
-import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 const buildMessageText = (message: PromptInputMessage) => {
@@ -59,8 +58,6 @@ const getLastUsedModelId = (messages?: ConversationMessage[]): string | null => 
 };
 
 const ChatSession = ({ initialMessages, initialThreadId }: ChatSessionProps) => {
-  const router = useRouter();
-  const pathname = usePathname();
   const preferredModelId = useMemo(
     () => getLastUsedModelId(initialMessages),
     [initialMessages]
@@ -118,6 +115,8 @@ const ChatSession = ({ initialMessages, initialThreadId }: ChatSessionProps) => 
       })(),
     ]);
 
+    const shouldRedirectToThread = !threadId;
+
     try {
       const response = await fetch("/api/chat", {
         body: JSON.stringify({
@@ -143,6 +142,15 @@ const ChatSession = ({ initialMessages, initialThreadId }: ChatSessionProps) => 
       if (resolvedThreadId && resolvedThreadId !== threadId) {
         setThreadId(resolvedThreadId);
       }
+      if (resolvedThreadId && shouldRedirectToThread) {
+        // Keep component mounted so streamed assistant tokens remain visible
+        // while still updating the URL to the thread route.
+        window.history.replaceState(
+          window.history.state,
+          "",
+          `/chats/${resolvedThreadId}`
+        );
+      }
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
@@ -165,16 +173,13 @@ const ChatSession = ({ initialMessages, initialThreadId }: ChatSessionProps) => 
       );
 
       window.dispatchEvent(new Event("chat-threads-updated"));
-      if (resolvedThreadId && pathname === "/") {
-        router.replace(`/chats/${resolvedThreadId}`);
-      }
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Unexpected chat error.";
 
       updateAssistantMessage(assistantMessageIndex, `Error: ${errorMessage}`);
     }
-  }, [pathname, router, threadId, updateAssistantMessage]);
+  }, [threadId, updateAssistantMessage]);
 
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl bg-background">
