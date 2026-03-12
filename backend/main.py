@@ -23,6 +23,7 @@ from app.routers.auth import router as auth_router
 from app.routers.catalog import router as catalog_router
 from app.routers.users import router as users_router
 from app.schemas import ChatRequest
+from app.services.auth import purge_expired_sessions
 from app.services.current_user import require_current_user
 
 load_dotenv()
@@ -31,6 +32,8 @@ load_dotenv()
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     init_db()
+    with SessionLocal() as db:
+        purge_expired_sessions(db)
     yield
 
 

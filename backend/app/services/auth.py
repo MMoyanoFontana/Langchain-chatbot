@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import re
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -14,7 +15,7 @@ from urllib.parse import urlencode
 
 import httpx
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
@@ -32,6 +33,7 @@ SESSION_TOKEN_BYTES = 48
 PRODUCTION_ENV_VALUES = {"prod", "production"}
 LOGGER = logging.getLogger(__name__)
 _DEV_FALLBACK_AUTH_SECRET: bytes | None = None
+_DEV_FALLBACK_AUTH_SECRET_LOCK = threading.Lock()
 
 
 class AuthConfigError(RuntimeError):
@@ -194,11 +196,13 @@ def _get_auth_secret() -> bytes:
 
     global _DEV_FALLBACK_AUTH_SECRET
     if _DEV_FALLBACK_AUTH_SECRET is None:
-        _DEV_FALLBACK_AUTH_SECRET = os.urandom(32)
-        LOGGER.warning(
-            "AUTH_SECRET is not set; using an ephemeral development secret. "
-            "OAuth state signatures will be invalidated on restart."
-        )
+        with _DEV_FALLBACK_AUTH_SECRET_LOCK:
+            if _DEV_FALLBACK_AUTH_SECRET is None:
+                _DEV_FALLBACK_AUTH_SECRET = os.urandom(32)
+                LOGGER.warning(
+                    "AUTH_SECRET is not set; using an ephemeral development secret. "
+                    "OAuth state signatures will be invalidated on restart."
+                )
     return _DEV_FALLBACK_AUTH_SECRET
 
 
@@ -253,6 +257,13 @@ def _get_session_record(db: Session, session_token: str) -> AuthSession | None:
     )
 
 
+def purge_expired_sessions(db: Session, *, now: datetime | None = None) -> int:
+    cutoff = now or utc_now()
+    result = db.execute(delete(AuthSession).where(AuthSession.expires_at <= cutoff))
+    db.commit()
+    return int(result.rowcount or 0)
+
+
 def get_user_for_session_token(db: Session, session_token: str | None) -> User | None:
     if not session_token:
         return None
@@ -269,6 +280,9 @@ def get_user_for_session_token(db: Session, session_token: str | None) -> User |
     user = auth_session.user
     if user is None or not user.is_active:
         return None
+
+    auth_session.last_used_at = utc_now()
+    db.commit()
 
     return user
 
