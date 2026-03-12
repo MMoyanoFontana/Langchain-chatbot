@@ -16,21 +16,13 @@ from app.schemas import (
     ProviderApiKeyUpsert,
     ProviderRead,
     ProviderSettingsRead,
-    UserCreate,
     UserRead,
     UserUpdate,
 )
-from app.services.current_user import get_dev_user, get_dev_user_or_404
 from app.security import EncryptionConfigError, decrypt_secret, encrypt_secret, mask_secret
+from app.services.current_user import require_current_user
 
 router = APIRouter(prefix="/users", tags=["users"])
-
-
-def _get_user_or_404(db: Session, user_id: str) -> User:
-    user = db.get(User, user_id)
-    if user is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
-    return user
 
 
 def _get_provider_or_404(db: Session, provider_code: ProviderCode) -> Provider:
@@ -84,131 +76,14 @@ def _build_thread_read(thread: ChatThread) -> ChatThreadRead:
     return ChatThreadRead.model_validate(thread)
 
 
-@router.get("", response_model=list[UserRead])
-def list_users(db: Session = Depends(get_db)) -> list[User]:
-    return list(db.scalars(select(User).order_by(User.created_at.desc())).all())
-
-
-@router.post("", response_model=UserRead, status_code=status.HTTP_201_CREATED)
-def create_user(payload: UserCreate, db: Session = Depends(get_db)) -> User:
-    email = payload.email.strip().lower()
-    if not email:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Email cannot be blank.")
-
-    existing = db.scalar(select(User).where(User.email == email))
-    if existing is not None:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="User with this email already exists.")
-
-    user = User(email=email, full_name=payload.full_name)
-    db.add(user)
-    db.commit()
-    db.refresh(user)
-    return user
-
-
-@router.get("/dev/current", response_model=UserRead)
-def get_dev_current_user(db: Session = Depends(get_db)) -> User:
-    return get_dev_user_or_404(db)
-
-
-@router.patch("/dev/current", response_model=UserRead)
-def update_dev_current_user(payload: UserUpdate, db: Session = Depends(get_db)) -> User:
-    user = get_dev_user_or_404(db)
-    return update_user(user.id, payload, db)
-
-
-@router.delete("/dev/current", status_code=status.HTTP_204_NO_CONTENT)
-def delete_dev_current_user(db: Session = Depends(get_db)) -> Response:
-    user = get_dev_user(db)
-    if user is None:
-        return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-    db.delete(user)
-    db.commit()
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-
-@router.get("/dev/current/settings/providers", response_model=list[ProviderSettingsRead])
-def list_dev_user_provider_settings(db: Session = Depends(get_db)) -> list[ProviderSettingsRead]:
-    user = get_dev_user_or_404(db)
-    return list_user_provider_settings(user.id, db)
-
-
-@router.get("/dev/current/settings/api-keys", response_model=list[ProviderApiKeyRead])
-def list_dev_user_api_keys(db: Session = Depends(get_db)) -> list[ProviderApiKeyRead]:
-    user = get_dev_user_or_404(db)
-    return list_user_api_keys(user.id, db)
-
-
-@router.put("/dev/current/settings/api-keys/{provider_code}", response_model=ProviderApiKeyRead)
-def upsert_dev_user_api_key(
-    provider_code: ProviderCode,
-    payload: ProviderApiKeyUpsert,
-    db: Session = Depends(get_db),
-) -> ProviderApiKeyRead:
-    user = get_dev_user_or_404(db)
-    return upsert_user_api_key(user.id, provider_code, payload, db)
-
-
-@router.patch("/dev/current/settings/api-keys/{api_key_id}", response_model=ProviderApiKeyRead)
-def update_dev_user_api_key(
-    api_key_id: str,
-    payload: ProviderApiKeyUpdate,
-    db: Session = Depends(get_db),
-) -> ProviderApiKeyRead:
-    user = get_dev_user_or_404(db)
-    return update_user_api_key(user.id, api_key_id, payload, db)
-
-
-@router.delete("/dev/current/settings/api-keys/{api_key_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_dev_user_api_key(api_key_id: str, db: Session = Depends(get_db)) -> Response:
-    user = get_dev_user_or_404(db)
-    return delete_user_api_key(user.id, api_key_id, db)
-
-
-@router.get("/dev/current/threads", response_model=list[ChatThreadSummaryRead])
-def list_dev_user_threads(db: Session = Depends(get_db)) -> list[ChatThread]:
-    user = get_dev_user_or_404(db)
-    return list_user_threads(user.id, db)
-
-
-@router.get("/dev/current/threads/{thread_id}", response_model=ChatThreadRead)
-def get_dev_user_thread(thread_id: str, db: Session = Depends(get_db)) -> ChatThreadRead:
-    user = get_dev_user_or_404(db)
-    return get_user_thread(user.id, thread_id, db)
-
-
-@router.patch("/dev/current/threads/{thread_id}", response_model=ChatThreadSummaryRead)
-def update_dev_user_thread(
-    thread_id: str,
-    payload: ChatThreadUpdate,
-    db: Session = Depends(get_db),
-) -> ChatThread:
-    user = get_dev_user_or_404(db)
-    return update_user_thread(user.id, thread_id, payload, db)
-
-
-@router.delete("/dev/current/threads/{thread_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_dev_user_thread(thread_id: str, db: Session = Depends(get_db)) -> Response:
-    user = get_dev_user_or_404(db)
-    return delete_user_thread(user.id, thread_id, db)
-
-
-@router.get("/{user_id}", response_model=UserRead)
-def get_user(user_id: str, db: Session = Depends(get_db)) -> User:
-    return _get_user_or_404(db, user_id)
-
-
-@router.patch("/{user_id}", response_model=UserRead)
-def update_user(user_id: str, payload: UserUpdate, db: Session = Depends(get_db)) -> User:
-    user = _get_user_or_404(db, user_id)
+def _update_user(user: User, payload: UserUpdate, db: Session) -> User:
     updates = payload.model_dump(exclude_unset=True)
 
     if "email" in updates and updates["email"] is not None:
         normalized_email = updates["email"].strip().lower()
         if not normalized_email:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Email cannot be blank.")
-        email_owner = db.scalar(select(User).where(User.email == normalized_email, User.id != user_id))
+        email_owner = db.scalar(select(User).where(User.email == normalized_email, User.id != user.id))
         if email_owner is not None:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Another user already has this email.")
         user.email = normalized_email
@@ -223,17 +98,7 @@ def update_user(user_id: str, payload: UserUpdate, db: Session = Depends(get_db)
     return user
 
 
-@router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_user(user_id: str, db: Session = Depends(get_db)) -> Response:
-    user = _get_user_or_404(db, user_id)
-    db.delete(user)
-    db.commit()
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-
-@router.get("/{user_id}/threads", response_model=list[ChatThreadSummaryRead])
-def list_user_threads(user_id: str, db: Session = Depends(get_db)) -> list[ChatThread]:
-    _get_user_or_404(db, user_id)
+def list_user_threads(user_id: str, db: Session) -> list[ChatThread]:
     threads = db.scalars(
         select(ChatThread)
         .where(ChatThread.user_id == user_id)
@@ -242,21 +107,17 @@ def list_user_threads(user_id: str, db: Session = Depends(get_db)) -> list[ChatT
     return list(threads)
 
 
-@router.get("/{user_id}/threads/{thread_id}", response_model=ChatThreadRead)
-def get_user_thread(user_id: str, thread_id: str, db: Session = Depends(get_db)) -> ChatThreadRead:
-    _get_user_or_404(db, user_id)
+def get_user_thread(user_id: str, thread_id: str, db: Session) -> ChatThreadRead:
     thread = _get_thread_or_404(db, user_id, thread_id, include_messages=True)
     return _build_thread_read(thread)
 
 
-@router.patch("/{user_id}/threads/{thread_id}", response_model=ChatThreadSummaryRead)
 def update_user_thread(
     user_id: str,
     thread_id: str,
     payload: ChatThreadUpdate,
-    db: Session = Depends(get_db),
+    db: Session,
 ) -> ChatThread:
-    _get_user_or_404(db, user_id)
     thread = _get_thread_or_404(db, user_id, thread_id)
     normalized_title = payload.title.strip()
     if not normalized_title:
@@ -268,19 +129,14 @@ def update_user_thread(
     return thread
 
 
-@router.delete("/{user_id}/threads/{thread_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_user_thread(user_id: str, thread_id: str, db: Session = Depends(get_db)) -> Response:
-    _get_user_or_404(db, user_id)
+def delete_user_thread(user_id: str, thread_id: str, db: Session) -> Response:
     thread = _get_thread_or_404(db, user_id, thread_id)
     db.delete(thread)
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.get("/{user_id}/settings/providers", response_model=list[ProviderSettingsRead])
-def list_user_provider_settings(user_id: str, db: Session = Depends(get_db)) -> list[ProviderSettingsRead]:
-    _get_user_or_404(db, user_id)
-
+def list_user_provider_settings(user_id: str, db: Session) -> list[ProviderSettingsRead]:
     providers = list(db.scalars(select(Provider).order_by(Provider.display_name.asc())).all())
     keys = list(db.scalars(select(ProviderApiKey).where(ProviderApiKey.user_id == user_id)).all())
 
@@ -302,10 +158,7 @@ def list_user_provider_settings(user_id: str, db: Session = Depends(get_db)) -> 
     return response
 
 
-@router.get("/{user_id}/settings/api-keys", response_model=list[ProviderApiKeyRead])
-def list_user_api_keys(user_id: str, db: Session = Depends(get_db)) -> list[ProviderApiKeyRead]:
-    _get_user_or_404(db, user_id)
-
+def list_user_api_keys(user_id: str, db: Session) -> list[ProviderApiKeyRead]:
     api_keys = list(
         db.scalars(
             select(ProviderApiKey)
@@ -317,14 +170,12 @@ def list_user_api_keys(user_id: str, db: Session = Depends(get_db)) -> list[Prov
     return [_build_api_key_response(api_key) for api_key in api_keys]
 
 
-@router.put("/{user_id}/settings/api-keys/{provider_code}", response_model=ProviderApiKeyRead)
 def upsert_user_api_key(
     user_id: str,
     provider_code: ProviderCode,
     payload: ProviderApiKeyUpsert,
-    db: Session = Depends(get_db),
+    db: Session,
 ) -> ProviderApiKeyRead:
-    _get_user_or_404(db, user_id)
     provider = _get_provider_or_404(db, provider_code)
     key_name = _normalize_key_name(payload.key_name)
 
@@ -384,15 +235,12 @@ def upsert_user_api_key(
     return _build_api_key_response(stored_api_key)
 
 
-@router.patch("/{user_id}/settings/api-keys/{api_key_id}", response_model=ProviderApiKeyRead)
 def update_user_api_key(
     user_id: str,
     api_key_id: str,
     payload: ProviderApiKeyUpdate,
-    db: Session = Depends(get_db),
+    db: Session,
 ) -> ProviderApiKeyRead:
-    _get_user_or_404(db, user_id)
-
     api_key = db.scalar(
         select(ProviderApiKey)
         .where(ProviderApiKey.id == api_key_id, ProviderApiKey.user_id == user_id)
@@ -445,10 +293,7 @@ def update_user_api_key(
     return _build_api_key_response(refreshed_api_key)
 
 
-@router.delete("/{user_id}/settings/api-keys/{api_key_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_user_api_key(user_id: str, api_key_id: str, db: Session = Depends(get_db)) -> Response:
-    _get_user_or_404(db, user_id)
-
+def delete_user_api_key(user_id: str, api_key_id: str, db: Session) -> Response:
     api_key = db.scalar(
         select(ProviderApiKey).where(ProviderApiKey.id == api_key_id, ProviderApiKey.user_id == user_id)
     )
@@ -458,3 +303,108 @@ def delete_user_api_key(user_id: str, api_key_id: str, db: Session = Depends(get
     db.delete(api_key)
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/me", response_model=UserRead)
+def get_current_user_profile(user: User = Depends(require_current_user)) -> User:
+    return user
+
+
+@router.patch("/me", response_model=UserRead)
+def update_current_user_profile(
+    payload: UserUpdate,
+    user: User = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> User:
+    return _update_user(user, payload, db)
+
+
+@router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
+def delete_current_user_profile(
+    user: User = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    db.delete(user)
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/me/settings/providers", response_model=list[ProviderSettingsRead])
+def list_current_user_provider_settings(
+    user: User = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> list[ProviderSettingsRead]:
+    return list_user_provider_settings(user.id, db)
+
+
+@router.get("/me/settings/api-keys", response_model=list[ProviderApiKeyRead])
+def list_current_user_api_keys(
+    user: User = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> list[ProviderApiKeyRead]:
+    return list_user_api_keys(user.id, db)
+
+
+@router.put("/me/settings/api-keys/{provider_code}", response_model=ProviderApiKeyRead)
+def upsert_current_user_api_key(
+    provider_code: ProviderCode,
+    payload: ProviderApiKeyUpsert,
+    user: User = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> ProviderApiKeyRead:
+    return upsert_user_api_key(user.id, provider_code, payload, db)
+
+
+@router.patch("/me/settings/api-keys/{api_key_id}", response_model=ProviderApiKeyRead)
+def update_current_user_api_key(
+    api_key_id: str,
+    payload: ProviderApiKeyUpdate,
+    user: User = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> ProviderApiKeyRead:
+    return update_user_api_key(user.id, api_key_id, payload, db)
+
+
+@router.delete("/me/settings/api-keys/{api_key_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_current_user_api_key(
+    api_key_id: str,
+    user: User = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    return delete_user_api_key(user.id, api_key_id, db)
+
+
+@router.get("/me/threads", response_model=list[ChatThreadSummaryRead])
+def list_current_user_threads(
+    user: User = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> list[ChatThread]:
+    return list_user_threads(user.id, db)
+
+
+@router.get("/me/threads/{thread_id}", response_model=ChatThreadRead)
+def get_current_user_thread(
+    thread_id: str,
+    user: User = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> ChatThreadRead:
+    return get_user_thread(user.id, thread_id, db)
+
+
+@router.patch("/me/threads/{thread_id}", response_model=ChatThreadSummaryRead)
+def update_current_user_thread(
+    thread_id: str,
+    payload: ChatThreadUpdate,
+    user: User = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> ChatThread:
+    return update_user_thread(user.id, thread_id, payload, db)
+
+
+@router.delete("/me/threads/{thread_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_current_user_thread(
+    thread_id: str,
+    user: User = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    return delete_user_thread(user.id, thread_id, db)

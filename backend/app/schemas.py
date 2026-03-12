@@ -5,12 +5,7 @@ from datetime import datetime
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 from app.constants import CHAT_THREAD_TITLE_MAX_LENGTH
-from app.models import MessageRole, ProviderCode
-
-
-class UserCreate(BaseModel):
-    email: str = Field(min_length=3, max_length=320)
-    full_name: str | None = Field(default=None, max_length=120)
+from app.models import AuthProvider, MessageRole, ProviderCode
 
 
 class UserUpdate(BaseModel):
@@ -25,9 +20,43 @@ class UserRead(BaseModel):
     id: str
     email: str
     full_name: str | None
+    avatar_url: str | None
     is_active: bool
     created_at: datetime
     updated_at: datetime
+
+
+class EmailRegisterRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+    password: str = Field(min_length=8, max_length=128)
+    full_name: str | None = Field(default=None, max_length=120)
+
+
+class EmailLoginRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+    password: str = Field(min_length=8, max_length=128)
+
+
+class AuthProviderRead(BaseModel):
+    code: AuthProvider
+    label: str
+    enabled: bool
+
+
+class OAuthAuthorizeRead(BaseModel):
+    authorize_url: str
+
+
+class OAuthExchangeRequest(BaseModel):
+    code: str = Field(min_length=1, max_length=4096)
+    state: str = Field(min_length=1, max_length=4096)
+    redirect_uri: str = Field(min_length=1, max_length=2048)
+
+
+class AuthSessionRead(BaseModel):
+    session_token: str
+    user: UserRead
+    redirect_to: str | None = None
 
 
 class ProviderRead(BaseModel):

@@ -1,24 +1,38 @@
 from __future__ import annotations
 
-from fastapi import HTTPException, status
-from sqlalchemy import select
+from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
+from app.db import get_db
 from app.models import User
-
-DEV_USER_ID = "00000000-0000-0000-0000-000000000001"
-DEV_USER_EMAIL = "user@local.chatbot"
+from app.services.auth import get_user_for_session_token
 
 
-def get_dev_user(db: Session) -> User | None:
-    user = db.get(User, DEV_USER_ID)
-    if user is not None:
-        return user
-    return db.scalar(select(User).where(User.email == DEV_USER_EMAIL))
+def get_session_token_from_request(request: Request) -> str | None:
+    authorization = request.headers.get("authorization", "").strip()
+    if authorization:
+        scheme, _, token = authorization.partition(" ")
+        if scheme.lower() == "bearer" and token.strip():
+            return token.strip()
+
+    header_token = request.headers.get("x-session-token", "").strip()
+    if header_token:
+        return header_token
+
+    return None
 
 
-def get_dev_user_or_404(db: Session) -> User:
-    user = get_dev_user(db)
+def get_current_user(
+    request: Request,
+    db: Session = Depends(get_db),
+) -> User | None:
+    return get_user_for_session_token(db, get_session_token_from_request(request))
+
+
+def require_current_user(user: User | None = Depends(get_current_user)) -> User:
     if user is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Current user not found.")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication is required.",
+        )
     return user
