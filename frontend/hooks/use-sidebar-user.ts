@@ -5,15 +5,14 @@ import { useCallback, useEffect, useState } from "react";
 export type SidebarUser = {
   name: string;
   email: string;
-  avatar: string;
+  avatar: string | null;
 };
 
 type CurrentUserResponse = {
   email?: string | null;
   full_name: string | null;
+  avatar_url?: string | null;
 };
-
-const DEFAULT_AVATAR_PATH = "/avatars/shadcn.jpg";
 
 const toSidebarUser = (payload: CurrentUserResponse): SidebarUser | null => {
   const email = payload.email?.trim() ?? "";
@@ -24,7 +23,7 @@ const toSidebarUser = (payload: CurrentUserResponse): SidebarUser | null => {
   return {
     name: payload.full_name?.trim() || email,
     email,
-    avatar: DEFAULT_AVATAR_PATH,
+    avatar: payload.avatar_url?.trim() || null,
   };
 };
 

@@ -1,6 +1,11 @@
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
-const BACKEND_URL = process.env.BACKEND_URL ?? "http://127.0.0.1:8000";
+import {
+  backendFetchFromRoute,
+  clearSessionCookie,
+  getRouteSessionToken,
+  parseUpstreamError,
+} from "@/lib/backend-route";
 
 type ChatRequestBody = {
   prompt?: string;
@@ -9,30 +14,12 @@ type ChatRequestBody = {
   providerCode?: string;
 };
 
-const parseUpstreamError = async (response: Response, fallback: string) => {
-  try {
-    const payload = (await response.json()) as {
-      detail?: string | { detail?: string };
-      error?: string;
-    };
-    const detail =
-      typeof payload.detail === "string"
-        ? payload.detail
-        : typeof payload.detail?.detail === "string"
-          ? payload.detail.detail
-          : null;
-    return (payload.error ?? detail ?? fallback).trim();
-  } catch {
-    try {
-      const errorText = (await response.text()).trim();
-      return errorText || fallback;
-    } catch {
-      return fallback;
-    }
-  }
-};
-
 export async function POST(request: NextRequest) {
+  const sessionToken = await getRouteSessionToken();
+  if (!sessionToken) {
+    return NextResponse.json({ error: "Authentication is required." }, { status: 401 });
+  }
+
   let prompt = "";
   let threadId = "";
   let modelId = "";
@@ -45,20 +32,19 @@ export async function POST(request: NextRequest) {
     modelId = body.modelId?.trim() ?? "";
     providerCode = body.providerCode?.trim().toLowerCase() ?? "";
   } catch {
-    return Response.json({ error: "Invalid request body." }, { status: 400 });
+    return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
   }
 
   if (!prompt) {
-    return Response.json({ error: "Prompt is required." }, { status: 400 });
+    return NextResponse.json({ error: "Prompt is required." }, { status: 400 });
   }
   if (!modelId) {
-    return Response.json({ error: "Model is required." }, { status: 400 });
+    return NextResponse.json({ error: "Model is required." }, { status: 400 });
   }
   if (!providerCode) {
-    return Response.json({ error: "Provider code is required." }, { status: 400 });
+    return NextResponse.json({ error: "Provider code is required." }, { status: 400 });
   }
 
-  const backendEndpoint = new URL("/chat", BACKEND_URL);
   const payload: {
     prompt: string;
     thread_id?: string;
@@ -70,20 +56,33 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const upstreamResponse = await fetch(backendEndpoint, {
-      headers: {
-        Accept: "text/plain",
-        "Content-Type": "application/json",
+    const upstreamResponse = await backendFetchFromRoute(
+      "/chat",
+      {
+        body: JSON.stringify(payload),
+        headers: {
+          Accept: "text/plain",
+          "Content-Type": "application/json",
+        },
+        method: "POST",
       },
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
+      sessionToken
+    );
 
     if (!upstreamResponse.ok || !upstreamResponse.body) {
-      return Response.json(
-        { error: await parseUpstreamError(upstreamResponse, "Backend chat request failed.") },
+      const response = NextResponse.json(
+        {
+          error: await parseUpstreamError(
+            upstreamResponse,
+            "Backend chat request failed."
+          ),
+        },
         { status: upstreamResponse.status || 502 }
       );
+      if (upstreamResponse.status === 401) {
+        clearSessionCookie(response);
+      }
+      return response;
     }
 
     const responseHeaders = new Headers({
@@ -101,7 +100,7 @@ export async function POST(request: NextRequest) {
       statusText: upstreamResponse.statusText,
     });
   } catch {
-    return Response.json(
+    return NextResponse.json(
       { error: "Unable to reach chat backend." },
       { status: 502 }
     );

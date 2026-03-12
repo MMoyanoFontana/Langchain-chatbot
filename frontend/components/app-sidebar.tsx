@@ -47,6 +47,7 @@ type AppSidebarProps = {
 export function AppSidebar({ initialUser }: AppSidebarProps) {
     const router = useRouter()
     const [settingsOpen, setSettingsOpen] = useState(false)
+    const [isLoggingOut, setIsLoggingOut] = useState(false)
     const pathname = usePathname()
 
     const {
@@ -102,6 +103,21 @@ export function AppSidebar({ initialUser }: AppSidebarProps) {
         setSettingsOpen(open)
         if (!open) {
             void refreshUser()
+        }
+    }
+
+    const handleLogout = async () => {
+        if (isLoggingOut) {
+            return
+        }
+
+        setIsLoggingOut(true)
+        try {
+            await fetch("/api/auth/logout", { method: "POST" })
+        } finally {
+            router.replace("/login")
+            router.refresh()
+            setIsLoggingOut(false)
         }
     }
 
@@ -229,7 +245,13 @@ export function AppSidebar({ initialUser }: AppSidebarProps) {
                             </SidebarMenuItem>
                         </SidebarMenu>
                     ) : appUser ? (
-                        <NavUser user={appUser} onSettingsClick={() => handleSettingsOpenChange(true)} />
+                        <NavUser
+                            user={appUser}
+                            onSettingsClick={() => handleSettingsOpenChange(true)}
+                            onLogout={() => {
+                                void handleLogout()
+                            }}
+                        />
                     ) : (
                         <SidebarMenu>
                             <SidebarMenuItem>

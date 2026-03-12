@@ -43,13 +43,15 @@ import { useTheme } from "next-themes"
 export function NavUser({
     user,
     onSettingsClick,
+    onLogout,
 }: {
     user: {
         name: string
         email: string
-        avatar: string
+        avatar: string | null
     }
     onSettingsClick?: () => void
+    onLogout?: () => void
 }) {
     const { isMobile } = useSidebar()
     const initials =
@@ -77,7 +79,7 @@ export function NavUser({
                     >
                         <Avatar className="h-8 w-8 rounded-lg">
                             <AvatarFallback className="rounded-lg">{initials}</AvatarFallback>
-                            <AvatarImage src={user.avatar} alt={user.name} />
+                            <AvatarImage src={user.avatar ?? undefined} alt={user.name} />
                         </Avatar>
                         <div className="grid flex-1 text-left text-sm leading-tight">
                             <span className="truncate font-medium">{user.name}</span>
@@ -135,7 +137,7 @@ export function NavUser({
                             </DropdownMenuSub>
                         </DropdownMenuGroup>
                         <DropdownMenuSeparator />
-                        <DropdownMenuItem variant="destructive">
+                        <DropdownMenuItem variant="destructive" onClick={onLogout}>
                             <LogOut />
                             Log out
                         </DropdownMenuItem>

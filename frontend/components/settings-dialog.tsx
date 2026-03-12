@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { useRouter } from "next/navigation"
 import {
   Save,
   Server,
@@ -250,6 +251,7 @@ export function SettingsDialog({
   onOpenChange: (open: boolean) => void
   children?: React.ReactNode
 }) {
+  const router = useRouter()
   const { theme, setTheme } = useTheme()
   const [activeTab, setActiveTab] = React.useState<SettingsTab>("profile")
   const [displayName, setDisplayName] = React.useState("")
@@ -468,11 +470,12 @@ export function SettingsDialog({
 
       setDeleteDialogOpen(false)
       setProviderDrafts({})
-      await loadRemoteSettings()
+      router.replace("/login")
+      router.refresh()
     } finally {
       setIsDeletingUser(false)
     }
-  }, [loadRemoteSettings])
+  }, [router])
 
   const activeTabMeta = nav.find((item) => item.id === activeTab) ?? nav[0]
   const activeTheme: ThemeMode =
