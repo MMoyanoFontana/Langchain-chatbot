@@ -66,3 +66,11 @@ export const clearSessionCookie = (response: NextResponse) => {
     secure: process.env.NODE_ENV === "production",
   });
 };
+
+export const normalizeInternalRedirect = (value: string | null | undefined) => {
+  const candidate = value?.trim() ?? "";
+  if (!candidate.startsWith("/") || candidate.startsWith("//") || candidate.startsWith("/\\")) {
+    return "/";
+  }
+  return candidate || "/";
+};

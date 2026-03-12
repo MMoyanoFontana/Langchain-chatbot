@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import {
   backendFetchFromRoute,
+  normalizeInternalRedirect,
   parseUpstreamError,
   setSessionCookie,
 } from "@/lib/backend-route";
@@ -12,14 +13,6 @@ const redirectToLogin = (request: NextRequest, error: string) => {
   const loginUrl = new URL("/login", request.nextUrl.origin);
   loginUrl.searchParams.set("error", error);
   return NextResponse.redirect(loginUrl);
-};
-
-const normalizeInternalRedirect = (value: string | null | undefined) => {
-  const candidate = value?.trim() ?? "";
-  if (!candidate.startsWith("/") || candidate.startsWith("//") || candidate.startsWith("/\\")) {
-    return "/";
-  }
-  return candidate || "/";
 };
 
 export async function GET(

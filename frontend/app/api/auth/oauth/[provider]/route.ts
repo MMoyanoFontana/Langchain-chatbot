@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import {
   backendFetchFromRoute,
+  normalizeInternalRedirect,
   parseUpstreamError,
 } from "@/lib/backend-route";
 
@@ -11,14 +12,6 @@ const redirectToAuthPage = (request: NextRequest, error: string) => {
   const loginUrl = new URL("/login", request.nextUrl.origin);
   loginUrl.searchParams.set("error", error);
   return NextResponse.redirect(loginUrl);
-};
-
-const normalizeInternalReturnTo = (value: string | null) => {
-  const candidate = value?.trim() ?? "";
-  if (!candidate.startsWith("/") || candidate.startsWith("//") || candidate.startsWith("/\\")) {
-    return "/";
-  }
-  return candidate || "/";
 };
 
 export async function GET(
@@ -34,7 +27,7 @@ export async function GET(
     `/api/auth/oauth/${provider}/callback`,
     request.nextUrl.origin
   ).toString();
-  const returnTo = normalizeInternalReturnTo(request.nextUrl.searchParams.get("returnTo"));
+  const returnTo = normalizeInternalRedirect(request.nextUrl.searchParams.get("returnTo"));
 
   try {
     const upstreamResponse = await backendFetchFromRoute(
