@@ -87,16 +87,6 @@ const PROVIDER_LOGO_MAP: Record<string, string> = {
     gemini: "google",
 };
 
-const FALLBACK_MODELS: ComposerModel[] = [
-    {
-        id: "gpt-5.2",
-        name: "GPT-5.2",
-        providerLabel: "OpenAI",
-        providerSlug: "openai",
-        providerCode: "openai",
-    },
-];
-
 const normalizeProviderSlug = (providerCode: string): string =>
     PROVIDER_LOGO_MAP[providerCode] ?? providerCode;
 
@@ -156,6 +146,17 @@ const persistSelectedModel = (modelId: string) => {
     }
 };
 
+const clearStoredSelectedModel = () => {
+    if (typeof window === "undefined") {
+        return;
+    }
+    try {
+        window.localStorage.removeItem(SELECTED_MODEL_STORAGE_KEY);
+    } catch {
+        // Ignore storage errors.
+    }
+};
+
 interface AttachmentItemProps {
     attachment: Extract<AttachmentData, { type: "file" }>;
     onRemove: (id: string) => void;
@@ -178,7 +179,7 @@ AttachmentItem.displayName = "AttachmentItem";
 
 interface ModelItemProps {
     m: ComposerModel;
-    selectedModel: string;
+    selectedModel: string | null;
     onSelect: (id: string) => void;
     disabled?: boolean;
     className?: string;
@@ -253,28 +254,19 @@ interface ProviderApiKeyResponse {
     is_active?: boolean;
 }
 
-const DEFAULT_MODEL_ID = FALLBACK_MODELS[0].id;
-
 const normalizeModelId = (value: string | null | undefined): string | null => {
     const normalized = value?.trim();
     return normalized || null;
 };
 
-const resolveDefaultModelId = (models: ComposerModel[]): string => {
-    if (models.some((entry) => entry.id === DEFAULT_MODEL_ID)) {
-        return DEFAULT_MODEL_ID;
-    }
-    return models[0]?.id ?? DEFAULT_MODEL_ID;
-};
-
 const PromptComposer = ({ className, preferredModelId, onSubmitMessage }: PromptComposerProps) => {
     const normalizedPreferredModelId = normalizeModelId(preferredModelId);
-    const [availableModels, setAvailableModels] = useState<ComposerModel[]>(FALLBACK_MODELS);
-    const [model, setModel] = useState<string>(
+    const [availableModels, setAvailableModels] = useState<ComposerModel[]>([]);
+    const [model, setModel] = useState<string | null>(
         () =>
             normalizedPreferredModelId ??
             readStoredSelectedModel() ??
-            DEFAULT_MODEL_ID
+            null
     );
     const [modelSelectorOpen, setModelSelectorOpen] = useState(false);
     const [collapsedProviders, setCollapsedProviders] = useState<Set<string>>(new Set());
@@ -302,10 +294,8 @@ const PromptComposer = ({ className, preferredModelId, onSubmitMessage }: Prompt
                 }
 
                 if (mappedModels.length === 0) {
-                    setAvailableModels(FALLBACK_MODELS);
-                    setModel((previous) =>
-                        previous === DEFAULT_MODEL_ID ? previous : DEFAULT_MODEL_ID
-                    );
+                    setAvailableModels([]);
+                    setModel(null);
                     return;
                 }
 
@@ -313,14 +303,12 @@ const PromptComposer = ({ className, preferredModelId, onSubmitMessage }: Prompt
                 setModel((previous) =>
                     mappedModels.some((entry) => entry.id === previous)
                         ? previous
-                        : resolveDefaultModelId(mappedModels)
+                        : null
                 );
             } catch {
                 if (!isCancelled) {
-                    setAvailableModels(FALLBACK_MODELS);
-                    setModel((previous) =>
-                        previous === DEFAULT_MODEL_ID ? previous : DEFAULT_MODEL_ID
-                    );
+                    setAvailableModels([]);
+                    setModel(null);
                 }
             } finally {
                 if (!isCancelled) {
@@ -392,32 +380,45 @@ const PromptComposer = ({ className, preferredModelId, onSubmitMessage }: Prompt
             return;
         }
 
+        const connectedModels = availableModels.filter((entry) =>
+            connectedProviderCodes.has(entry.providerCode)
+        );
+
         setModel((previous) => {
-            const selectedModel = availableModels.find((entry) => entry.id === previous);
-            if (selectedModel && connectedProviderCodes.has(selectedModel.providerCode)) {
+            if (previous && connectedModels.some((entry) => entry.id === previous)) {
                 return previous;
             }
 
-            const firstConnectedModel = availableModels.find((entry) =>
-                connectedProviderCodes.has(entry.providerCode)
-            );
-            if (firstConnectedModel) {
-                return firstConnectedModel.id;
+            if (
+                normalizedPreferredModelId &&
+                connectedModels.some((entry) => entry.id === normalizedPreferredModelId)
+            ) {
+                return normalizedPreferredModelId;
             }
 
-            return selectedModel?.id ?? resolveDefaultModelId(availableModels);
+            if (connectedModels.length === 0) {
+                return null;
+            }
+
+            return connectedModels[0].id;
         });
-    }, [availableModels, connectedProviderCodes, modelsLoading]);
+    }, [availableModels, connectedProviderCodes, modelsLoading, normalizedPreferredModelId]);
 
     useEffect(() => {
-        if (!model) {
+        if (model) {
+            persistSelectedModel(model);
             return;
         }
-        persistSelectedModel(model);
+
+        clearStoredSelectedModel();
     }, [model]);
 
     const selectedModelData =
-        availableModels.find((entry) => entry.id === model) ?? FALLBACK_MODELS[0];
+        model ? availableModels.find((entry) => entry.id === model) ?? null : null;
+    const canSubmit = Boolean(
+        selectedModelData &&
+        connectedProviderCodes.has(selectedModelData.providerCode)
+    );
 
     const modelsByProvider = useMemo(() => {
         const grouped = new Map<string, ProviderModelGroup>();
@@ -471,6 +472,9 @@ const PromptComposer = ({ className, preferredModelId, onSubmitMessage }: Prompt
         if (!(hasText || hasAttachments)) {
             return;
         }
+        if (!canSubmit || !selectedModelData) {
+            return;
+        }
 
         setStatus("submitted");
         setStatus("streaming");
@@ -499,7 +503,7 @@ const PromptComposer = ({ className, preferredModelId, onSubmitMessage }: Prompt
         setTimeout(() => {
             setStatus("ready");
         }, SUBMITTING_TIMEOUT + STREAMING_TIMEOUT);
-    }, [onSubmitMessage, selectedModelData.id, selectedModelData.providerCode]);
+    }, [canSubmit, onSubmitMessage, selectedModelData]);
 
     return (
         <div className={className ?? "size-full"}>
@@ -540,7 +544,7 @@ const PromptComposer = ({ className, preferredModelId, onSubmitMessage }: Prompt
                                                         />
                                                     )}
                                                     <ModelSelectorName>
-                                                        {selectedModelData?.name ?? "Select model"}
+                                                        {selectedModelData?.name ?? "No model selected"}
                                                     </ModelSelectorName>
                                                 </>
                                             )}
@@ -622,7 +626,10 @@ const PromptComposer = ({ className, preferredModelId, onSubmitMessage }: Prompt
                                 </ModelSelectorContent>
                             </ModelSelector>
                         </PromptInputTools>
-                        <PromptInputSubmit status={status} />
+                        <PromptInputSubmit
+                            disabled={modelsLoading || !canSubmit}
+                            status={status}
+                        />
                     </PromptInputFooter>
                 </PromptInput>
             </PromptInputProvider>
