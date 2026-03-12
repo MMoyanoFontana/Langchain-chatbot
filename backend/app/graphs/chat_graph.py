@@ -95,6 +95,11 @@ def _error_state(
 
 
 def _route_after_step(state: ChatGraphState) -> Literal["continue", "error"]:
+    # LangGraph merges partial node outputs into state, so successful nodes must keep
+    # `error_status` reset to 0 to avoid stale error routing.
+    error_status = state.get("error_status")
+    if isinstance(error_status, int) and error_status > 0:
+        return "error"
     return "error" if state.get("error_message") else "continue"
 
 
