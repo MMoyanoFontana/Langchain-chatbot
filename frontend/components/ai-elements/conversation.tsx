@@ -1,6 +1,7 @@
 "use client";
 
 import type { ComponentProps } from "react";
+import type { FileUIPart } from "ai";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -103,8 +104,21 @@ export const ConversationScrollButton = ({
 export interface ConversationMessage {
   role: "user" | "assistant" | "system" | "data" | "tool";
   content: string;
-  providerCode?: "openai" | "anthropic" | "gemini" | "groq" | "xai" | "openrouter" | "other";
+  attachments?: FileUIPart[];
+  providerCode?: "openai" | "anthropic" | "gemini" | "groq" | "other";
   modelName?: string | null;
+  citations?: ConversationMessageCitation[];
+  reasoning?: string | null;
+  reasoningLabel?: string | null;
+  reasoningStreaming?: boolean;
+}
+
+export interface ConversationMessageCitation {
+  documentId: string;
+  filename?: string | null;
+  chunkIndex: number;
+  score?: number | null;
+  text: string;
 }
 
 export type ConversationDownloadProps = Omit<
@@ -119,7 +133,23 @@ export type ConversationDownloadProps = Omit<
 const defaultFormatMessage = (message: ConversationMessage): string => {
   const roleLabel =
     message.role.charAt(0).toUpperCase() + message.role.slice(1);
-  return `**${roleLabel}:** ${message.content}`;
+  const attachmentsLine =
+    message.attachments && message.attachments.length > 0
+      ? `\n\nAttachments: ${message.attachments
+          .map((attachment) => attachment.filename || "Attachment")
+          .join(", ")}`
+      : "";
+  const citationsLine =
+    message.citations && message.citations.length > 0
+      ? `\n\nCitations: ${message.citations
+          .map((citation) => {
+            const label = citation.filename?.trim() || "Document";
+            return `${label} (chunk ${citation.chunkIndex + 1})`;
+          })
+          .join(", ")}`
+      : "";
+  const content = message.content || "(No text)";
+  return `**${roleLabel}:** ${content}${attachmentsLine}${citationsLine}`;
 };
 
 export const messagesToMarkdown = (
