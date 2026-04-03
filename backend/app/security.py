@@ -10,17 +10,21 @@ class EncryptionConfigError(RuntimeError):
     pass
 
 
+def _get_encryption_key_bytes() -> bytes:
+    configured_key = os.getenv("API_KEY_ENCRYPTION_KEY", "").strip()
+    if configured_key:
+        return configured_key.encode("utf-8")
+
+    raise EncryptionConfigError(
+        "API_KEY_ENCRYPTION_KEY is not set. Generate one with "
+        "`python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\"`."
+    )
+
+
 @lru_cache(maxsize=1)
 def _get_fernet() -> Fernet:
-    key = os.getenv("API_KEY_ENCRYPTION_KEY")
-    if not key:
-        raise EncryptionConfigError(
-            "API_KEY_ENCRYPTION_KEY is not set. Generate one with "
-            "`python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\"`."
-        )
-
     try:
-        return Fernet(key.encode("utf-8"))
+        return Fernet(_get_encryption_key_bytes())
     except ValueError as exc:
         raise EncryptionConfigError(
             "API_KEY_ENCRYPTION_KEY is invalid. It must be a urlsafe base64-encoded 32-byte key."
