@@ -67,36 +67,6 @@ RECOMMENDED_PROVIDER_CATALOG: tuple[CatalogProviderDefinition, ...] = (
         ),
     ),
     CatalogProviderDefinition(
-        code=ProviderCode.XAI,
-        display_name="xAI",
-        models=(
-            CatalogModelDefinition(model_id="grok-3-latest", display_name="Grok 3 Latest"),
-            CatalogModelDefinition(
-                model_id="grok-3-fast-latest",
-                display_name="Grok 3 Fast Latest",
-            ),
-            CatalogModelDefinition(model_id="grok-code-fast-1", display_name="Grok Code Fast 1"),
-        ),
-    ),
-    CatalogProviderDefinition(
-        code=ProviderCode.OPENROUTER,
-        display_name="OpenRouter",
-        models=(
-            CatalogModelDefinition(
-                model_id="anthropic/claude-sonnet-4.5",
-                display_name="Claude Sonnet 4.5 (OpenRouter)",
-            ),
-            CatalogModelDefinition(
-                model_id="openai/gpt-5.1",
-                display_name="GPT-5.1 (OpenRouter)",
-            ),
-            CatalogModelDefinition(
-                model_id="google/gemini-3-pro-preview",
-                display_name="Gemini 3 Pro Preview (OpenRouter)",
-            ),
-        ),
-    ),
-    CatalogProviderDefinition(
         code=ProviderCode.OTHER,
         display_name="Other",
         models=(),
