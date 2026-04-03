@@ -1,0 +1,6 @@
+# Claude Code
+.claude/
+
+# AI agent config files
+AGENTS.md
+.codex
