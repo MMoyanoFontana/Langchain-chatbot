@@ -80,34 +80,51 @@ def logout(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+_OAUTH_NONCE_COOKIE = "oauth_nonce"
+_OAUTH_NONCE_MAX_AGE = 600  # 10 minutes, matches STATE_MAX_AGE
+
+
 @router.get("/oauth/{provider}/authorize", response_model=OAuthAuthorizeRead)
 def get_oauth_authorize_url(
     provider: AuthProvider,
+    response: Response,
     redirect_uri: str = Query(min_length=1, max_length=2048),
     return_to: str | None = Query(default=None, max_length=2048),
 ) -> OAuthAuthorizeRead:
-    return OAuthAuthorizeRead(
-        authorize_url=build_oauth_authorize_url(
-            provider,
-            redirect_uri=redirect_uri,
-            return_to=return_to,
-        )
+    authorize_url, nonce = build_oauth_authorize_url(
+        provider,
+        redirect_uri=redirect_uri,
+        return_to=return_to,
     )
+    response.set_cookie(
+        _OAUTH_NONCE_COOKIE,
+        nonce,
+        httponly=True,
+        samesite="strict",
+        secure=True,
+        max_age=_OAUTH_NONCE_MAX_AGE,
+    )
+    return OAuthAuthorizeRead(authorize_url=authorize_url)
 
 
 @router.post("/oauth/{provider}/exchange", response_model=AuthSessionRead)
 async def exchange_oauth_callback(
     provider: AuthProvider,
     payload: OAuthExchangeRequest,
+    request: Request,
+    response: Response,
     db: Session = Depends(get_db),
 ) -> AuthSessionRead:
+    nonce = request.cookies.get(_OAUTH_NONCE_COOKIE)
     user, session_token, redirect_to = await exchange_oauth_code(
         db,
         provider=provider,
         code=payload.code,
         state=payload.state,
         redirect_uri=payload.redirect_uri,
+        nonce=nonce,
     )
+    response.delete_cookie(_OAUTH_NONCE_COOKIE)
     return _build_auth_response(
         user=user,
         session_token=session_token,
