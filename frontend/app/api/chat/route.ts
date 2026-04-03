@@ -6,12 +6,14 @@ import {
   getRouteSessionToken,
   parseUpstreamError,
 } from "@/lib/backend-route";
+import type { ChatAttachmentRequest } from "@/lib/chat-attachments";
 
 type ChatRequestBody = {
   prompt?: string;
   threadId?: string;
   modelId?: string;
   providerCode?: string;
+  attachments?: ChatAttachmentRequest[];
 };
 
 export async function POST(request: NextRequest) {
@@ -24,6 +26,7 @@ export async function POST(request: NextRequest) {
   let threadId = "";
   let modelId = "";
   let providerCode = "";
+  let attachments: ChatAttachmentRequest[] = [];
 
   try {
     const body = (await request.json()) as ChatRequestBody;
@@ -31,12 +34,16 @@ export async function POST(request: NextRequest) {
     threadId = body.threadId?.trim() ?? "";
     modelId = body.modelId?.trim() ?? "";
     providerCode = body.providerCode?.trim().toLowerCase() ?? "";
+    attachments = Array.isArray(body.attachments) ? body.attachments : [];
   } catch {
     return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
   }
 
-  if (!prompt) {
-    return NextResponse.json({ error: "Prompt is required." }, { status: 400 });
+  if (!prompt && attachments.length === 0) {
+    return NextResponse.json(
+      { error: "Message text or at least one attachment is required." },
+      { status: 400 }
+    );
   }
   if (!modelId) {
     return NextResponse.json({ error: "Model is required." }, { status: 400 });
@@ -50,7 +57,8 @@ export async function POST(request: NextRequest) {
     thread_id?: string;
     model_id: string;
     provider_code: string;
-  } = { prompt, model_id: modelId, provider_code: providerCode };
+    attachments: ChatAttachmentRequest[];
+  } = { prompt, model_id: modelId, provider_code: providerCode, attachments };
   if (threadId) {
     payload.thread_id = threadId;
   }

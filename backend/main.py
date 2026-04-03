@@ -22,9 +22,11 @@ from app.models import User
 from app.routers.auth import router as auth_router
 from app.routers.catalog import router as catalog_router
 from app.routers.users import router as users_router
+from app.runtime_config import get_cors_allowed_origins
 from app.schemas import ChatRequest
 from app.services.auth import purge_expired_sessions
 from app.services.current_user import require_current_user
+from app.services.rag import get_rag_service
 
 load_dotenv()
 
@@ -41,10 +43,11 @@ app = FastAPI(lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:3001"],
+    allow_origins=get_cors_allowed_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["Authorization", "Content-Type", "Accept", "X-Session-Token"],
+    expose_headers=["X-Thread-Id"],
 )
 
 app.include_router(auth_router)
@@ -72,7 +75,12 @@ async def chat(payload: ChatRequest, user: User = Depends(require_current_user))
         db.close()
 
     try:
-        graph_result = await run_chat_graph(payload=payload, db=db, user_id=user.id)
+        graph_result = await run_chat_graph(
+            payload=payload,
+            db=db,
+            user_id=user.id,
+            rag_service=get_rag_service(),
+        )
     except Exception:
         close_db_session()
         raise
@@ -99,10 +107,12 @@ async def chat(payload: ChatRequest, user: User = Depends(require_current_user))
         finally:
             close_db_session()
 
+    response_headers = {"X-Thread-Id": graph_result.thread_id}
+
     return StreamingResponse(
         stream_llm(),
         media_type="text/plain",
-        headers={"X-Thread-Id": graph_result.thread_id},
+        headers=response_headers,
         background=BackgroundTask(close_db_session),
     )
 

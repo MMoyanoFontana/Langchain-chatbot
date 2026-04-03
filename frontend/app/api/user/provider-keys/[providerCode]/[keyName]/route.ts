@@ -11,8 +11,6 @@ const ALLOWED_PROVIDER_CODES = new Set([
   "anthropic",
   "gemini",
   "groq",
-  "xai",
-  "openrouter",
   "other",
 ]);
 

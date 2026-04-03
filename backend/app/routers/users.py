@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.db import get_db
-from app.models import ChatMessage, ChatThread, Provider, ProviderApiKey, ProviderCode, User
+from app.models import ChatMessage, ChatThread, DocumentIndexStatus, IndexedDocument, Provider, ProviderApiKey, ProviderCode, User
 from app.schemas import (
+    ChatMessageRead,
+    ChatThreadDocumentRead,
     ChatThreadRead,
     ChatThreadSummaryRead,
     ChatThreadUpdate,
@@ -21,6 +25,7 @@ from app.schemas import (
 )
 from app.security import EncryptionConfigError, decrypt_secret, encrypt_secret, mask_secret
 from app.services.current_user import require_current_user
+from app.services.rag import RagConfigurationError, get_rag_service
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -35,7 +40,10 @@ def _get_provider_or_404(db: Session, provider_code: ProviderCode) -> Provider:
 def _get_thread_or_404(db: Session, user_id: str, thread_id: str, include_messages: bool = False) -> ChatThread:
     query = select(ChatThread).where(ChatThread.id == thread_id, ChatThread.user_id == user_id)
     if include_messages:
-        query = query.options(selectinload(ChatThread.messages).selectinload(ChatMessage.provider))
+        query = query.options(
+            selectinload(ChatThread.messages).selectinload(ChatMessage.provider),
+            selectinload(ChatThread.indexed_documents),
+        )
 
     thread = db.scalar(query)
     if thread is None:
@@ -73,7 +81,19 @@ def _build_api_key_response(api_key: ProviderApiKey) -> ProviderApiKeyRead:
 
 
 def _build_thread_read(thread: ChatThread) -> ChatThreadRead:
-    return ChatThreadRead.model_validate(thread)
+    documents = sorted(
+        thread.indexed_documents,
+        key=lambda document: document.created_at,
+        reverse=True,
+    )
+    return ChatThreadRead(
+        id=thread.id,
+        title=thread.title,
+        created_at=thread.created_at,
+        updated_at=thread.updated_at,
+        documents=[ChatThreadDocumentRead.model_validate(document) for document in documents],
+        messages=[ChatMessageRead.model_validate(message) for message in thread.messages],
+    )
 
 
 def _update_user(user: User, payload: UserUpdate, db: Session) -> User:
@@ -131,6 +151,13 @@ def update_user_thread(
 
 def delete_user_thread(user_id: str, thread_id: str, db: Session) -> Response:
     thread = _get_thread_or_404(db, user_id, thread_id)
+    asyncio.run(
+        get_rag_service().delete_thread_documents(
+            db=db,
+            user_id=user_id,
+            thread_id=thread_id,
+        )
+    )
     db.delete(thread)
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -293,6 +320,69 @@ def update_user_api_key(
     return _build_api_key_response(refreshed_api_key)
 
 
+def delete_user_thread_document(
+    user_id: str,
+    thread_id: str,
+    document_id: str,
+    db: Session,
+) -> Response:
+    _get_thread_or_404(db, user_id, thread_id)
+    document = db.scalar(
+        select(IndexedDocument).where(
+            IndexedDocument.id == document_id,
+            IndexedDocument.thread_id == thread_id,
+        )
+    )
+    if document is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.")
+
+    asyncio.run(
+        get_rag_service().delete_document(
+            db=db,
+            user_id=user_id,
+            thread_id=thread_id,
+            document_id=document_id,
+        )
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+def retry_user_thread_document(
+    user_id: str,
+    thread_id: str,
+    document_id: str,
+    db: Session,
+) -> ChatThreadDocumentRead:
+    _get_thread_or_404(db, user_id, thread_id)
+    document = db.scalar(
+        select(IndexedDocument).where(
+            IndexedDocument.id == document_id,
+            IndexedDocument.thread_id == thread_id,
+        )
+    )
+    if document is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.")
+    if document.status != DocumentIndexStatus.FAILED:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Only failed documents can be retried.",
+        )
+
+    try:
+        updated = asyncio.run(
+            get_rag_service().retry_document(
+                db=db,
+                user_id=user_id,
+                thread_id=thread_id,
+                document_id=document_id,
+            )
+        )
+    except RagConfigurationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
+    return ChatThreadDocumentRead.model_validate(updated)
+
+
 def delete_user_api_key(user_id: str, api_key_id: str, db: Session) -> Response:
     api_key = db.scalar(
         select(ProviderApiKey).where(ProviderApiKey.id == api_key_id, ProviderApiKey.user_id == user_id)
@@ -324,6 +414,12 @@ def delete_current_user_profile(
     user: User = Depends(require_current_user),
     db: Session = Depends(get_db),
 ) -> Response:
+    asyncio.run(
+        get_rag_service().delete_user_documents(
+            db=db,
+            user_id=user.id,
+        )
+    )
     db.delete(user)
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -408,3 +504,23 @@ def delete_current_user_thread(
     db: Session = Depends(get_db),
 ) -> Response:
     return delete_user_thread(user.id, thread_id, db)
+
+
+@router.delete("/me/threads/{thread_id}/documents/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_current_user_thread_document(
+    thread_id: str,
+    document_id: str,
+    user: User = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    return delete_user_thread_document(user.id, thread_id, document_id, db)
+
+
+@router.post("/me/threads/{thread_id}/documents/{document_id}/retry", response_model=ChatThreadDocumentRead)
+def retry_current_user_thread_document(
+    thread_id: str,
+    document_id: str,
+    user: User = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> ChatThreadDocumentRead:
+    return retry_user_thread_document(user.id, thread_id, document_id, db)

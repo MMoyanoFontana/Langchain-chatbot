@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 from app.constants import CHAT_THREAD_TITLE_MAX_LENGTH
-from app.models import AuthProvider, MessageRole, ProviderCode
+from app.models import AuthProvider, DocumentIndexStatus, MessageRole, ProviderCode
 
 
 class UserUpdate(BaseModel):
@@ -110,8 +111,18 @@ class ProviderModelRead(BaseModel):
     provider: ProviderRead
 
 
+class ChatAttachment(BaseModel):
+    type: Literal["file"] = "file"
+    filename: str | None = Field(default=None, max_length=512)
+    media_type: str = Field(
+        min_length=1,
+        validation_alias=AliasChoices("media_type", "mediaType"),
+    )
+    url: str = Field(min_length=1)
+
+
 class ChatRequest(BaseModel):
-    prompt: str = Field(min_length=1)
+    prompt: str = Field(default="")
     thread_id: str | None = Field(
         default=None,
         validation_alias=AliasChoices("thread_id", "threadId"),
@@ -124,6 +135,15 @@ class ChatRequest(BaseModel):
         default=None,
         validation_alias=AliasChoices("provider_code", "providerCode"),
     )
+    attachments: list[ChatAttachment] = Field(default_factory=list)
+
+
+class ChatCitation(BaseModel):
+    document_id: str = Field(min_length=1, max_length=36)
+    filename: str | None = Field(default=None, max_length=512)
+    chunk_index: int = Field(ge=0)
+    score: float | None = None
+    text: str = Field(min_length=1)
 
 
 class ChatMessageRead(BaseModel):
@@ -132,9 +152,27 @@ class ChatMessageRead(BaseModel):
     id: str
     role: MessageRole
     content: str
+    attachments: list[ChatAttachment] = Field(default_factory=list)
+    citations: list[ChatCitation] = Field(default_factory=list)
     provider_code: ProviderCode | None = None
     model_name: str | None
     created_at: datetime
+
+
+class ChatThreadDocumentRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    source_message_id: str | None
+    filename: str | None
+    media_type: str
+    byte_size: int
+    chunk_count: int
+    status: DocumentIndexStatus
+    error_message: str | None
+    indexed_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
 
 
 class ChatThreadSummaryRead(BaseModel):
@@ -153,6 +191,7 @@ class ChatThreadRead(BaseModel):
     title: str | None
     created_at: datetime
     updated_at: datetime
+    documents: list[ChatThreadDocumentRead] = Field(default_factory=list)
     messages: list[ChatMessageRead]
 
 
