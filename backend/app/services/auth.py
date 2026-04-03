@@ -7,7 +7,7 @@ import json
 import logging
 import os
 import re
-import threading
+import secrets
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -26,14 +26,12 @@ PASSWORD_HASH_N = 2**17
 PASSWORD_HASH_R = 8
 PASSWORD_HASH_P = 1
 PASSWORD_HASH_DKLEN = 64
+PASSWORD_HASH_MAXMEM = int(os.getenv("AUTH_PASSWORD_HASH_MAXMEM", "0"))
 SESSION_MAX_AGE = timedelta(days=int(os.getenv("AUTH_SESSION_TTL_DAYS", "30")))
 STATE_MAX_AGE = timedelta(minutes=int(os.getenv("AUTH_STATE_TTL_MINUTES", "10")))
 PLACEHOLDER_EMAIL_DOMAIN = "users.local"
 SESSION_TOKEN_BYTES = 48
-PRODUCTION_ENV_VALUES = {"prod", "production"}
 LOGGER = logging.getLogger(__name__)
-_DEV_FALLBACK_AUTH_SECRET: bytes | None = None
-_DEV_FALLBACK_AUTH_SECRET_LOCK = threading.Lock()
 
 
 class AuthConfigError(RuntimeError):
@@ -129,14 +127,30 @@ def _base64url_decode(raw: str) -> bytes:
     return base64.urlsafe_b64decode(f"{raw}{padding}".encode("utf-8"))
 
 
-def _hash_password_value(password: str, salt: bytes) -> bytes:
+def _required_scrypt_maxmem(n: int, r: int, p: int) -> int:
+    # OpenSSL applies a 32 MiB default limit when maxmem is omitted. Our
+    # chosen parameters need more headroom, so compute a floor that works
+    # across platforms while still allowing an env override to raise it.
+    return 128 * r * (n + p + 2)
+
+
+def _hash_password_value(
+    password: str,
+    salt: bytes,
+    *,
+    n: int = PASSWORD_HASH_N,
+    r: int = PASSWORD_HASH_R,
+    p: int = PASSWORD_HASH_P,
+    dklen: int = PASSWORD_HASH_DKLEN,
+) -> bytes:
     return hashlib.scrypt(
         password.encode("utf-8"),
         salt=salt,
-        n=PASSWORD_HASH_N,
-        r=PASSWORD_HASH_R,
-        p=PASSWORD_HASH_P,
-        dklen=PASSWORD_HASH_DKLEN,
+        n=n,
+        r=r,
+        p=p,
+        dklen=dklen,
+        maxmem=max(PASSWORD_HASH_MAXMEM, _required_scrypt_maxmem(n, r, p)),
     )
 
 
@@ -170,9 +184,9 @@ def verify_password(password: str, password_hash: str) -> bool:
     except (TypeError, ValueError):
         return False
 
-    derived_hash = hashlib.scrypt(
-        password.encode("utf-8"),
-        salt=salt,
+    derived_hash = _hash_password_value(
+        password,
+        salt,
         n=n,
         r=r,
         p=p,
@@ -186,24 +200,11 @@ def _get_auth_secret() -> bytes:
     if configured_secret:
         return configured_secret.encode("utf-8")
 
-    environment_values = (
-        os.getenv("APP_ENV", "").strip().lower(),
-        os.getenv("ENVIRONMENT", "").strip().lower(),
-        os.getenv("NODE_ENV", "").strip().lower(),
-    )
-    if any(value in PRODUCTION_ENV_VALUES for value in environment_values if value):
-        raise AuthConfigError("AUTH_SECRET must be configured in production.")
+    raise AuthConfigError("AUTH_SECRET must be configured.")
 
-    global _DEV_FALLBACK_AUTH_SECRET
-    if _DEV_FALLBACK_AUTH_SECRET is None:
-        with _DEV_FALLBACK_AUTH_SECRET_LOCK:
-            if _DEV_FALLBACK_AUTH_SECRET is None:
-                _DEV_FALLBACK_AUTH_SECRET = os.urandom(32)
-                LOGGER.warning(
-                    "AUTH_SECRET is not set; using an ephemeral development secret. "
-                    "OAuth state signatures will be invalidated on restart."
-                )
-    return _DEV_FALLBACK_AUTH_SECRET
+
+def _is_oauth_signing_available() -> bool:
+    return bool(os.getenv("AUTH_SECRET", "").strip())
 
 
 def _build_session_token() -> str:
@@ -304,37 +305,30 @@ def register_user_with_password(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Email cannot be blank.")
 
     user = db.scalar(select(User).where(User.email == normalized_email))
-    if user is not None and user.password_hash is not None:
+    if user is not None:
+        if not user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="This account is disabled.",
+            )
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="An account with this email already exists.",
         )
-    if user is not None and not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="This account is disabled.",
-        )
 
     password_hash = hash_password(password)
     normalized_name = _normalize_name(full_name)
-    if user is None:
-        user = User(email=normalized_email, full_name=normalized_name, password_hash=password_hash)
-        db.add(user)
-        try:
-            db.commit()
-        except IntegrityError as exc:
-            db.rollback()
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="An account with this email already exists.",
-            ) from exc
-        db.refresh(user)
-    else:
-        user.password_hash = password_hash
-        if normalized_name:
-            user.full_name = normalized_name
+    user = User(email=normalized_email, full_name=normalized_name, password_hash=password_hash)
+    db.add(user)
+    try:
         db.commit()
-        db.refresh(user)
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An account with this email already exists.",
+        ) from exc
+    db.refresh(user)
 
     return user, create_user_session(db, user)
 
@@ -425,7 +419,10 @@ def list_oauth_providers() -> list[dict[str, str | bool]]:
             {
                 "code": provider.code.value,
                 "label": provider.label,
-                "enabled": _get_oauth_provider_config(provider.code) is not None,
+                "enabled": (
+                    _get_oauth_provider_config(provider.code) is not None
+                    and _is_oauth_signing_available()
+                ),
             }
         )
     return providers
@@ -436,7 +433,9 @@ def build_oauth_authorize_url(
     *,
     redirect_uri: str,
     return_to: str | None,
-) -> str:
+) -> tuple[str, str]:
+    """Return (authorize_url, nonce). The caller must store the nonce in a
+    SameSite=Strict HttpOnly cookie and verify it on callback."""
     oauth_config = _get_oauth_provider_config(provider)
     if oauth_config is None:
         raise HTTPException(
@@ -444,12 +443,14 @@ def build_oauth_authorize_url(
             detail=f"{OAUTH_PROVIDERS[provider].label} sign-in is not configured.",
         )
 
+    nonce = secrets.token_urlsafe(32)
     normalized_return_to = normalize_return_to(return_to)
     state = _sign_oauth_state(
         {
             "provider": provider.value,
             "redirect_uri": redirect_uri,
             "return_to": normalized_return_to,
+            "nonce": nonce,
             "exp": int((utc_now() + STATE_MAX_AGE).timestamp()),
         }
     )
@@ -465,7 +466,7 @@ def build_oauth_authorize_url(
         params["access_type"] = "offline"
         params["prompt"] = "select_account"
 
-    return f"{oauth_config.definition.authorize_url}?{urlencode(params)}"
+    return f"{oauth_config.definition.authorize_url}?{urlencode(params)}", nonce
 
 
 async def exchange_oauth_code(
@@ -475,6 +476,7 @@ async def exchange_oauth_code(
     code: str,
     state: str,
     redirect_uri: str,
+    nonce: str | None,
 ) -> tuple[User, str, str]:
     oauth_config = _get_oauth_provider_config(provider)
     if oauth_config is None:
@@ -488,6 +490,9 @@ async def exchange_oauth_code(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="OAuth provider does not match request.")
     if state_payload.get("redirect_uri") != redirect_uri:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="OAuth redirect URI does not match request.")
+    state_nonce = state_payload.get("nonce", "")
+    if not nonce or not isinstance(state_nonce, str) or not hmac.compare_digest(nonce, state_nonce):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="OAuth state is invalid.")
 
     async with httpx.AsyncClient(timeout=10.0) as client:
         token_payload = await _request_oauth_token(
