@@ -1,8 +1,5 @@
 "use client";
 
-import type { PromptInputMessage } from "@/components/ai-elements/prompt-input";
-import type { AttachmentData } from "@/components/ai-elements/attachments";
-
 import {
     Attachment,
     AttachmentPreview,
@@ -27,10 +24,11 @@ import {
     PromptInputActionMenu,
     PromptInputActionMenuContent,
     PromptInputActionMenuTrigger,
+    type PromptInputAttachment,
     PromptInputBody,
     PromptInputButton,
     PromptInputFooter,
-    PromptInputProvider,
+    type PromptInputMessage,
     PromptInputSubmit,
     PromptInputTextarea,
     PromptInputTools,
@@ -38,6 +36,7 @@ import {
 } from "@/components/ai-elements/prompt-input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import type { BackendProviderCode, SubmitMessagePayload } from "@/contexts/chat-composer-context";
 import { CheckIcon, ChevronDown, ChevronRight } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
 
@@ -47,15 +46,6 @@ interface CatalogProvider {
     display_name: string;
     is_active: boolean;
 }
-
-type BackendProviderCode =
-    | "openai"
-    | "anthropic"
-    | "gemini"
-    | "groq"
-    | "xai"
-    | "openrouter"
-    | "other";
 
 interface CatalogModelResponse {
     id: number;
@@ -96,8 +86,6 @@ const normalizeProviderCode = (providerCode: string): BackendProviderCode => {
         providerCode === "anthropic" ||
         providerCode === "gemini" ||
         providerCode === "groq" ||
-        providerCode === "xai" ||
-        providerCode === "openrouter" ||
         providerCode === "other"
     ) {
         return providerCode;
@@ -158,7 +146,7 @@ const clearStoredSelectedModel = () => {
 };
 
 interface AttachmentItemProps {
-    attachment: Extract<AttachmentData, { type: "file" }>;
+    attachment: PromptInputAttachment;
     onRemove: (id: string) => void;
 }
 
@@ -170,6 +158,12 @@ const AttachmentItem = memo(({ attachment, onRemove }: AttachmentItemProps) => {
     return (
         <Attachment data={attachment} key={attachment.id} onRemove={handleRemove}>
             <AttachmentPreview />
+            <div className="min-w-0 flex-1">
+                <div className="truncate">{attachment.filename ?? "Attachment"}</div>
+                <span className="block truncate text-muted-foreground text-xs">
+                    {attachment.mediaType}
+                </span>
+            </div>
             <AttachmentRemove />
         </Attachment>
     );
@@ -225,7 +219,10 @@ const PromptInputAttachmentsDisplay = () => {
     }
 
     return (
-        <Attachments variant="inline">
+        <Attachments
+            className="w-full self-stretch justify-start px-2.5 pt-2.5"
+            variant="inline"
+        >
             {attachments.files.map((attachment) => (
                 <AttachmentItem
                     attachment={attachment}
@@ -240,11 +237,7 @@ const PromptInputAttachmentsDisplay = () => {
 interface PromptComposerProps {
     className?: string;
     preferredModelId?: string | null;
-    onSubmitMessage?: (payload: {
-        message: PromptInputMessage;
-        modelId: string;
-        providerCode: BackendProviderCode;
-    }) => void | Promise<void>;
+    onSubmitMessage?: (payload: SubmitMessagePayload) => void | Promise<void>;
 }
 
 interface ProviderApiKeyResponse {
@@ -259,7 +252,11 @@ const normalizeModelId = (value: string | null | undefined): string | null => {
     return normalized || null;
 };
 
-const PromptComposer = ({ className, preferredModelId, onSubmitMessage }: PromptComposerProps) => {
+const PromptComposer = ({
+    className,
+    preferredModelId,
+    onSubmitMessage,
+}: PromptComposerProps) => {
     const normalizedPreferredModelId = normalizeModelId(preferredModelId);
     const [availableModels, setAvailableModels] = useState<ComposerModel[]>([]);
     const [model, setModel] = useState<string | null>(
@@ -507,8 +504,11 @@ const PromptComposer = ({ className, preferredModelId, onSubmitMessage }: Prompt
 
     return (
         <div className={className ?? "size-full"}>
-            <PromptInputProvider>
-                <PromptInput globalDrop multiple onSubmit={handleSubmit}>
+                <PromptInput
+                    globalDrop
+                    multiple
+                    onSubmit={handleSubmit}
+                >
                     <PromptInputAttachmentsDisplay />
                     <PromptInputBody>
                         <PromptInputTextarea
@@ -632,7 +632,6 @@ const PromptComposer = ({ className, preferredModelId, onSubmitMessage }: Prompt
                         />
                     </PromptInputFooter>
                 </PromptInput>
-            </PromptInputProvider>
         </div>
     );
 };

@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 
 import { AppSidebar } from "@/components/app-sidebar";
+import { ChatShell } from "@/components/chat-shell";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import type { SidebarUser } from "@/hooks/use-sidebar-user";
 import { getServerCurrentUser } from "@/lib/backend";
@@ -36,7 +37,9 @@ export default async function AppLayout({
         <header className="flex h-12 shrink-0 items-center px-3">
           <SidebarTrigger />
         </header>
-        <div className="min-h-0 min-w-0 flex-1 overflow-hidden p-2">{children}</div>
+        <div className="min-h-0 min-w-0 flex-1 overflow-hidden p-2">
+            <ChatShell>{children}</ChatShell>
+          </div>
       </div>
     </SidebarProvider>
   );

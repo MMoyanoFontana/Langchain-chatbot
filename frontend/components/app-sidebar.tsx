@@ -132,6 +132,7 @@ export function AppSidebar({ initialUser }: AppSidebarProps) {
                                 <SidebarMenuItem key="new-chat">
                                     <SidebarMenuButton
                                         render={<Link href="/" />}
+                                        onClick={() => void refreshHistory()}
                                     >
                                         <PlusCircle />
                                         <span>New chat</span>

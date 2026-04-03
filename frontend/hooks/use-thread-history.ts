@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 type ThreadSummaryResponse = {
   id: string;
@@ -18,10 +18,15 @@ export function useThreadHistory(refreshKey?: string) {
   const [threads, setThreads] = useState<ThreadHistoryItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const hasLoaded = useRef(false);
 
   const refresh = useCallback(async () => {
     setError(null);
-    setIsLoading(true);
+    // Only show the loading spinner before the first successful fetch.
+    // Subsequent refreshes update silently so the list doesn't flicker.
+    if (!hasLoaded.current) {
+      setIsLoading(true);
+    }
 
     try {
       const response = await fetch("/api/threads", { cache: "no-store" });
@@ -36,6 +41,7 @@ export function useThreadHistory(refreshKey?: string) {
       }
 
       const payload = (await response.json()) as ThreadSummaryResponse[];
+      hasLoaded.current = true;
       setThreads(
         payload.map((thread) => ({
           id: thread.id,

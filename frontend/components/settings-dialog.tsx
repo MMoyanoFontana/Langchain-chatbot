@@ -58,8 +58,6 @@ type BackendProviderCode =
   | "anthropic"
   | "gemini"
   | "groq"
-  | "xai"
-  | "openrouter"
   | "other"
 
 type ProviderOption = {
@@ -125,21 +123,7 @@ const PROVIDER_OPTIONS: ProviderOption[] = [
     providerCode: "gemini",
   },
   { id: "groq", name: "Groq", logo: "groq", inputType: "api-key", providerCode: "groq" },
-  { id: "xai", name: "xAI", logo: "xai", inputType: "api-key", providerCode: "xai" },
-  {
-    id: "openrouter",
-    name: "OpenRouter",
-    logo: "openrouter",
-    inputType: "api-key",
-    providerCode: "openrouter",
-  },
-  {
-    id: "mistral",
-    name: "Mistral",
-    logo: "mistral",
-    inputType: "api-key",
-    providerCode: "other",
-  },
+
 ]
 
 const THEME_OPTIONS: ThemeOption[] = [
@@ -261,6 +245,7 @@ export function SettingsDialog({
   const [providerDrafts, setProviderDrafts] = React.useState<Record<string, string>>({})
   const [providerError, setProviderError] = React.useState<string | null>(null)
   const [providerActionLoadingId, setProviderActionLoadingId] = React.useState<string | null>(null)
+  const [providerConfigChanged, setProviderConfigChanged] = React.useState(false)
   const [storageReady, setStorageReady] = React.useState(false)
   const [profileReady, setProfileReady] = React.useState(false)
   const [deleteDialogOpen, setDeleteDialogOpen] = React.useState(false)
@@ -350,6 +335,15 @@ export function SettingsDialog({
     }
   }, [language, storageReady])
 
+  React.useEffect(() => {
+    if (open || !providerConfigChanged) {
+      return
+    }
+
+    setProviderConfigChanged(false)
+    window.location.reload()
+  }, [open, providerConfigChanged])
+
   const syncProfile = React.useCallback(async () => {
     if (!profileReady) {
       return
@@ -425,6 +419,7 @@ export function SettingsDialog({
         return [nextKey, ...withoutCurrent]
       })
       setProviderDrafts((previous) => ({ ...previous, [provider.id]: "" }))
+      setProviderConfigChanged(true)
     } catch (error) {
       setProviderError(
         error instanceof Error ? error.message : "Could not save provider key."
@@ -451,6 +446,7 @@ export function SettingsDialog({
 
       setProviders((previous) => previous.filter((entry) => entry.id !== provider.id))
       setProviderDrafts((previous) => ({ ...previous, [provider.id]: "" }))
+      setProviderConfigChanged(true)
     } catch (error) {
       setProviderError(
         error instanceof Error ? error.message : "Could not delete provider key."

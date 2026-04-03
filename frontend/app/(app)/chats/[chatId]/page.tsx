@@ -2,6 +2,8 @@ import { notFound } from "next/navigation";
 
 import ChatSession from "@/components/chat-session";
 import type { ConversationMessage } from "@/components/ai-elements/conversation";
+import { toConversationCitation, type BackendChatCitation } from "@/lib/chat-citations";
+import { toChatAttachment, type BackendChatAttachment } from "@/lib/chat-attachments";
 import { fetchBackend, getServerSessionToken } from "@/lib/backend";
 
 type ChatPageProps = {
@@ -13,6 +15,8 @@ type ChatPageProps = {
 type ThreadMessageResponse = {
   role: string;
   content: string;
+  attachments?: BackendChatAttachment[] | null;
+  citations?: BackendChatCitation[] | null;
   provider_code?: string | null;
   model_name?: string | null;
 };
@@ -43,14 +47,14 @@ const toProviderCode = (
     providerCode === "anthropic" ||
     providerCode === "gemini" ||
     providerCode === "groq" ||
-    providerCode === "xai" ||
-    providerCode === "openrouter" ||
     providerCode === "other"
   ) {
     return providerCode;
   }
   return undefined;
 };
+
+const isDefined = <Value,>(value: Value | null): value is Value => value !== null;
 
 export default async function ChatPage({ params }: ChatPageProps) {
   const sessionToken = await getServerSessionToken();
@@ -73,11 +77,19 @@ export default async function ChatPage({ params }: ChatPageProps) {
 
   const thread = (await response.json()) as ThreadResponse;
   const initialMessages: ConversationMessage[] = thread.messages.map((message) => ({
+    attachments:
+      message.attachments?.map(toChatAttachment).filter(isDefined) || undefined,
+    citations:
+      message.citations?.map(toConversationCitation).filter(isDefined) || undefined,
     role: toConversationRole(message.role),
     content: message.content,
     providerCode: toProviderCode(message.provider_code),
     modelName: message.model_name ?? null,
   }));
-
-  return <ChatSession initialMessages={initialMessages} initialThreadId={thread.id} />;
+  return (
+    <ChatSession
+      initialMessages={initialMessages}
+      initialThreadId={thread.id}
+    />
+  );
 }
