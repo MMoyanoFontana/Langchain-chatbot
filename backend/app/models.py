@@ -10,6 +10,7 @@ from sqlalchemy import (
     Enum,
     ForeignKey,
     Integer,
+    JSON,
     String,
     Text,
     UniqueConstraint,
@@ -28,8 +29,6 @@ class ProviderCode(str, enum.Enum):
     GEMINI = "gemini"
     ANTHROPIC = "anthropic"
     GROQ = "groq"
-    XAI = "xai"
-    OPENROUTER = "openrouter"
     OTHER = "other"
 
 
@@ -44,6 +43,12 @@ class MessageRole(str, enum.Enum):
     USER = "user"
     ASSISTANT = "assistant"
     TOOL = "tool"
+
+
+class DocumentIndexStatus(str, enum.Enum):
+    PENDING = "pending"
+    INDEXED = "indexed"
+    FAILED = "failed"
 
 
 class User(Base):
@@ -75,6 +80,14 @@ class User(Base):
         cascade="all, delete-orphan",
     )
     chat_threads: Mapped[list["ChatThread"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+    indexed_documents: Mapped[list["IndexedDocument"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+    user_memories: Mapped[list["UserMemory"]] = relationship(
         back_populates="user",
         cascade="all, delete-orphan",
     )
@@ -234,6 +247,8 @@ class ChatThread(Base):
         index=True,
     )
     title: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    summary_message_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -248,6 +263,10 @@ class ChatThread(Base):
         cascade="all, delete-orphan",
         order_by="ChatMessage.created_at",
     )
+    indexed_documents: Mapped[list["IndexedDocument"]] = relationship(
+        back_populates="thread",
+        cascade="all, delete-orphan",
+    )
 
 
 class ChatMessage(Base):
@@ -261,6 +280,16 @@ class ChatMessage(Base):
     )
     role: Mapped[MessageRole] = mapped_column(Enum(MessageRole, name="message_role"), index=True)
     content: Mapped[str] = mapped_column(Text)
+    attachments: Mapped[list[dict[str, str | None]]] = mapped_column(
+        JSON,
+        default=list,
+        nullable=False,
+    )
+    citations: Mapped[list[dict[str, object]]] = mapped_column(
+        JSON,
+        default=list,
+        nullable=False,
+    )
     provider_id: Mapped[int | None] = mapped_column(
         Integer,
         ForeignKey("providers.id", ondelete="SET NULL"),
@@ -274,9 +303,89 @@ class ChatMessage(Base):
 
     thread: Mapped["ChatThread"] = relationship(back_populates="messages")
     provider: Mapped["Provider | None"] = relationship(back_populates="messages")
+    indexed_documents: Mapped[list["IndexedDocument"]] = relationship(
+        back_populates="source_message",
+    )
 
     @property
     def provider_code(self) -> ProviderCode | None:
         if self.provider is None:
             return None
         return self.provider.code
+
+
+class IndexedDocument(Base):
+    __tablename__ = "indexed_documents"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "thread_id",
+            "checksum_sha256",
+            name="uq_indexed_document_user_thread_checksum",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        index=True,
+    )
+    thread_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("chat_threads.id", ondelete="CASCADE"),
+        index=True,
+    )
+    source_message_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("chat_messages.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    filename: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    media_type: Mapped[str] = mapped_column(String(255))
+    checksum_sha256: Mapped[str] = mapped_column(String(64))
+    byte_size: Mapped[int] = mapped_column(Integer)
+    chunk_count: Mapped[int] = mapped_column(Integer, default=0)
+    pinecone_namespace: Mapped[str] = mapped_column(String(255))
+    status: Mapped[DocumentIndexStatus] = mapped_column(
+        Enum(DocumentIndexStatus, name="document_index_status"),
+        default=DocumentIndexStatus.PENDING,
+        index=True,
+    )
+    error_message: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    indexed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        onupdate=utc_now,
+    )
+
+    user: Mapped["User"] = relationship(back_populates="indexed_documents")
+    thread: Mapped["ChatThread"] = relationship(back_populates="indexed_documents")
+    source_message: Mapped["ChatMessage | None"] = relationship(back_populates="indexed_documents")
+
+
+class UserMemory(Base):
+    __tablename__ = "user_memories"
+    __table_args__ = (
+        UniqueConstraint("user_id", "key", name="uq_user_memory_user_key"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        index=True,
+    )
+    key: Mapped[str] = mapped_column(String(100))
+    value: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        onupdate=utc_now,
+    )
+
+    user: Mapped["User"] = relationship(back_populates="user_memories")

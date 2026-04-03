@@ -20,8 +20,6 @@ provider_code_enum = sa.Enum(
     "GEMINI",
     "ANTHROPIC",
     "GROQ",
-    "XAI",
-    "OPENROUTER",
     "OTHER",
     name="provider_code",
     native_enum=False,
