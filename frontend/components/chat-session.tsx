@@ -45,7 +45,7 @@ import { CheckIcon, CopyIcon, FileTextIcon, RefreshCwIcon, ServerIcon } from "lu
 import { useRouter } from "next/navigation";
 import type { BackendProviderCode } from "@/contexts/chat-composer-context";
 import { useChatComposer } from "@/contexts/chat-composer-context";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 const normalizeMessageText = (message: PromptInputMessage) => message.text?.trim() ?? "";
 
@@ -89,7 +89,7 @@ interface MessageAttachmentsProps {
   messageIndex: number;
 }
 
-const MessageAttachments = ({
+const MessageAttachments = memo(({
   attachments,
   align = "start",
   messageIndex,
@@ -121,7 +121,9 @@ const MessageAttachments = ({
       );
     })}
   </Attachments>
-);
+));
+
+MessageAttachments.displayName = "MessageAttachments";
 
 interface GroupedDocumentCitation {
   documentId: string;
@@ -152,8 +154,8 @@ interface MessageCitationsProps {
   citations: ConversationMessageCitation[];
 }
 
-const MessageCitations = ({ citations }: MessageCitationsProps) => {
-  const grouped = groupCitationsByDocument(citations);
+const MessageCitations = memo(({ citations }: MessageCitationsProps) => {
+  const grouped = useMemo(() => groupCitationsByDocument(citations), [citations]);
   return (
     <TooltipProvider delay={300}>
       <div className="mt-2 flex flex-wrap gap-1.5">
@@ -177,7 +179,9 @@ const MessageCitations = ({ citations }: MessageCitationsProps) => {
       </div>
     </TooltipProvider>
   );
-};
+});
+
+MessageCitations.displayName = "MessageCitations";
 
 interface CopyButtonProps {
   text: string;
@@ -206,6 +210,120 @@ const CopyButton = ({ text }: CopyButtonProps) => {
 };
 
 
+interface MessageItemProps {
+  message: ConversationMessage;
+  index: number;
+  onRegenerateFrom: (
+    messageId: string,
+    modelId: string,
+    providerCode: BackendProviderCode
+  ) => Promise<void>;
+}
+
+const MessageItem = memo(({ message, index, onRegenerateFrom }: MessageItemProps) => {
+  if (message.role === "tool") return null;
+
+  const from =
+    message.role === "user"
+      ? "user"
+      : message.role === "system"
+        ? "system"
+        : "assistant";
+  const metaText = message.modelName ? message.modelName : null;
+  const trimmedContent = message.content.trim();
+  const hasAttachments = Boolean(message.attachments?.length);
+  const hasCitations = Boolean(message.citations?.length);
+  const isStreaming = message.reasoningStreaming;
+
+  return (
+    <Message from={from}>
+      {hasAttachments ? (
+        <MessageAttachments
+          align={from === "assistant" ? "start" : "end"}
+          attachments={message.attachments ?? []}
+          messageIndex={index}
+        />
+      ) : null}
+      {from === "assistant" ? (
+        <MessageBranch>
+          <MessageBranchContent>
+            <div className="flex items-start gap-2.5">
+              <div className="bg-muted/40 border-border mt-0.5 flex size-8 shrink-0 items-center justify-center overflow-hidden rounded-full border">
+                {message.providerCode && message.providerCode !== "other" ? (
+                  <ModelSelectorLogo
+                    provider={toProviderLogo(message.providerCode)}
+                    className="size-5"
+                  />
+                ) : (
+                  <ServerIcon className="text-muted-foreground size-5" />
+                )}
+              </div>
+              <MessageContent>
+                {message.reasoningStreaming ? (
+                  <div className="text-muted-foreground mb-3 flex items-center gap-2 text-sm">
+                    <span className="bg-current size-2 animate-pulse rounded-full" />
+                    <Shimmer duration={1.2}>
+                      {message.reasoningLabel ?? "Processing..."}
+                    </Shimmer>
+                  </div>
+                ) : null}
+                {metaText ? (
+                  <div className="text-muted-foreground mb-1 text-xs">
+                    {metaText}
+                  </div>
+                ) : null}
+                {trimmedContent ? (
+                  <MessageResponse>{message.content}</MessageResponse>
+                ) : null}
+                {hasCitations ? (
+                  <MessageCitations citations={message.citations ?? []} />
+                ) : null}
+              </MessageContent>
+            </div>
+          </MessageBranchContent>
+          {!isStreaming && trimmedContent ? (
+            <MessageToolbar>
+              <MessageBranchSelector>
+                <MessageBranchPrevious />
+                <MessageBranchPage />
+                <MessageBranchNext />
+              </MessageBranchSelector>
+              <MessageActions>
+                <CopyButton text={trimmedContent} />
+                {message.id && message.modelName && message.providerCode ? (
+                  <MessageAction
+                    tooltip="Regenerate"
+                    onClick={() => {
+                      void onRegenerateFrom(
+                        message.id!,
+                        message.modelName!,
+                        message.providerCode!
+                      );
+                    }}
+                  >
+                    <RefreshCwIcon className="size-3.5" />
+                  </MessageAction>
+                ) : null}
+              </MessageActions>
+            </MessageToolbar>
+          ) : null}
+        </MessageBranch>
+      ) : trimmedContent ? (
+        <>
+          <MessageContent>
+            <MessageResponse>{message.content}</MessageResponse>
+          </MessageContent>
+          <MessageActions className="justify-end">
+            <CopyButton text={trimmedContent} />
+          </MessageActions>
+        </>
+      ) : null}
+    </Message>
+  );
+});
+
+MessageItem.displayName = "MessageItem";
+
 const ChatSession = ({ initialMessages, initialThreadId }: ChatSessionProps) => {
   const router = useRouter();
   const preferredModelId = useMemo(
@@ -217,17 +335,12 @@ const ChatSession = ({ initialMessages, initialThreadId }: ChatSessionProps) => 
   const [hasThreadRoute, setHasThreadRoute] = useState<boolean>(() => Boolean(initialThreadId));
 
   useEffect(() => {
-    if (!initialMessages) {
-      return;
+    if (initialMessages) {
+      setMessages(initialMessages);
     }
-
-    setMessages(initialMessages);
-  }, [initialMessages]);
-
-  useEffect(() => {
     setThreadId(initialThreadId ?? null);
     setHasThreadRoute(Boolean(initialThreadId));
-  }, [initialThreadId]);
+  }, [initialMessages, initialThreadId]);
 
   const updateAssistantMessage = useCallback((index: number, content: string) => {
     setMessages((prev) => {
@@ -441,107 +554,14 @@ const ChatSession = ({ initialMessages, initialThreadId }: ChatSessionProps) => 
               title="Ready when you are"
             />
           ) : (
-            messages.map((message, index) => {
-              if (message.role === "tool") return null;
-
-              const from =
-                message.role === "user"
-                  ? "user"
-                  : message.role === "system"
-                    ? "system"
-                    : "assistant";
-              const metaText = message.modelName ? message.modelName : null;
-              const trimmedContent = message.content.trim();
-              const hasAttachments = Boolean(message.attachments?.length);
-              const hasCitations = Boolean(message.citations?.length);
-              const isStreaming = message.reasoningStreaming;
-
-              return (
-                <Message from={from} key={`${index}-${message.role}`}>
-                  {hasAttachments ? (
-                    <MessageAttachments
-                      align={from === "assistant" ? "start" : "end"}
-                      attachments={message.attachments ?? []}
-                      messageIndex={index}
-                    />
-                  ) : null}
-                  {from === "assistant" ? (
-                    <MessageBranch>
-                      <MessageBranchContent>
-                        <div className="flex items-start gap-2.5">
-                          <div className="bg-muted/40 border-border mt-0.5 flex size-8 shrink-0 items-center justify-center overflow-hidden rounded-full border">
-                            {message.providerCode && message.providerCode !== "other" ? (
-                              <ModelSelectorLogo
-                                provider={toProviderLogo(message.providerCode)}
-                                className="size-5"
-                              />
-                            ) : (
-                              <ServerIcon className="text-muted-foreground size-5" />
-                            )}
-                          </div>
-                          <MessageContent>
-                            {message.reasoningStreaming ? (
-                              <div className="text-muted-foreground mb-3 flex items-center gap-2 text-sm">
-                                <span className="bg-current size-2 animate-pulse rounded-full" />
-                                <Shimmer duration={1.2}>
-                                  {message.reasoningLabel ?? "Processing..."}
-                                </Shimmer>
-                              </div>
-                            ) : null}
-                            {metaText ? (
-                              <div className="text-muted-foreground mb-1 text-xs">
-                                {metaText}
-                              </div>
-                            ) : null}
-                            {trimmedContent ? (
-                              <MessageResponse>{message.content}</MessageResponse>
-                            ) : null}
-                            {hasCitations ? (
-                              <MessageCitations citations={message.citations ?? []} />
-                            ) : null}
-                          </MessageContent>
-                        </div>
-                      </MessageBranchContent>
-                      {!isStreaming && trimmedContent ? (
-                        <MessageToolbar>
-                          <MessageBranchSelector>
-                            <MessageBranchPrevious />
-                            <MessageBranchPage />
-                            <MessageBranchNext />
-                          </MessageBranchSelector>
-                          <MessageActions>
-                            <CopyButton text={trimmedContent} />
-                            {message.id && message.modelName && message.providerCode ? (
-                              <MessageAction
-                                tooltip="Regenerate"
-                                onClick={() => {
-                                  void handleRegenerateFrom(
-                                    message.id!,
-                                    message.modelName!,
-                                    message.providerCode!
-                                  );
-                                }}
-                              >
-                                <RefreshCwIcon className="size-3.5" />
-                              </MessageAction>
-                            ) : null}
-                          </MessageActions>
-                        </MessageToolbar>
-                      ) : null}
-                    </MessageBranch>
-                  ) : trimmedContent ? (
-                    <>
-                      <MessageContent>
-                        <MessageResponse>{message.content}</MessageResponse>
-                      </MessageContent>
-                      <MessageActions className="justify-end">
-                        <CopyButton text={trimmedContent} />
-                      </MessageActions>
-                    </>
-                  ) : null}
-                </Message>
-              );
-            })
+            messages.map((message, index) => (
+              <MessageItem
+                key={`${index}-${message.role}`}
+                index={index}
+                message={message}
+                onRegenerateFrom={handleRegenerateFrom}
+              />
+            ))
           )}
         </ConversationContent>
         <ConversationScrollButton />

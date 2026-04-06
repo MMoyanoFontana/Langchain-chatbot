@@ -276,19 +276,42 @@ const PromptComposer = ({
     useEffect(() => {
         let isCancelled = false;
 
-        const loadModels = async () => {
+        const loadInitialData = async () => {
             try {
-                const response = await fetch("/api/models", { cache: "no-store" });
-                if (!response.ok) {
-                    throw new Error(`Models request failed with status ${response.status}`);
+                const [modelsResponse, keysResponse] = await Promise.all([
+                    fetch("/api/models", { cache: "no-store" }),
+                    fetch("/api/user/provider-keys", { cache: "no-store" }),
+                ]);
+
+                if (!modelsResponse.ok) {
+                    throw new Error(`Models request failed with status ${modelsResponse.status}`);
+                }
+                if (!keysResponse.ok) {
+                    throw new Error(`Provider keys request failed with status ${keysResponse.status}`);
                 }
 
-                const payload = (await response.json()) as CatalogModelResponse[];
-                const mappedModels = payload.map(mapCatalogModelToComposerModel);
+                const [modelsPayload, keysPayload] = (await Promise.all([
+                    modelsResponse.json(),
+                    keysResponse.json(),
+                ])) as [CatalogModelResponse[], ProviderApiKeyResponse[]];
 
                 if (isCancelled) {
                     return;
                 }
+
+                const mappedModels = modelsPayload.map(mapCatalogModelToComposerModel);
+
+                const connectedCodes = new Set<BackendProviderCode>();
+                for (const entry of keysPayload) {
+                    if (entry.is_active === false) {
+                        continue;
+                    }
+                    connectedCodes.add(
+                        normalizeProviderCode(entry.provider?.code?.toLowerCase() ?? "")
+                    );
+                }
+
+                setConnectedProviderCodes(connectedCodes);
 
                 if (mappedModels.length === 0) {
                     setAvailableModels([]);
@@ -298,14 +321,13 @@ const PromptComposer = ({
 
                 setAvailableModels(mappedModels);
                 setModel((previous) =>
-                    mappedModels.some((entry) => entry.id === previous)
-                        ? previous
-                        : null
+                    mappedModels.some((entry) => entry.id === previous) ? previous : null
                 );
             } catch {
                 if (!isCancelled) {
                     setAvailableModels([]);
                     setModel(null);
+                    setConnectedProviderCodes(new Set());
                 }
             } finally {
                 if (!isCancelled) {
@@ -314,7 +336,7 @@ const PromptComposer = ({
             }
         };
 
-        void loadModels();
+        void loadInitialData();
 
         return () => {
             isCancelled = true;
@@ -330,47 +352,6 @@ const PromptComposer = ({
             previous === normalizedPreferredModelId ? previous : normalizedPreferredModelId
         );
     }, [normalizedPreferredModelId]);
-
-    useEffect(() => {
-        let isCancelled = false;
-
-        const loadProviderKeys = async () => {
-            try {
-                const response = await fetch("/api/user/provider-keys", { cache: "no-store" });
-                if (!response.ok) {
-                    throw new Error(`Provider keys request failed with status ${response.status}`);
-                }
-
-                const payload = (await response.json()) as ProviderApiKeyResponse[];
-                if (isCancelled) {
-                    return;
-                }
-
-                const connectedCodes = new Set<BackendProviderCode>();
-                for (const entry of payload) {
-                    if (entry.is_active === false) {
-                        continue;
-                    }
-                    const providerCode = normalizeProviderCode(
-                        entry.provider?.code?.toLowerCase() ?? ""
-                    );
-                    connectedCodes.add(providerCode);
-                }
-
-                setConnectedProviderCodes(connectedCodes);
-            } catch {
-                if (!isCancelled) {
-                    setConnectedProviderCodes(new Set());
-                }
-            }
-        };
-
-        void loadProviderKeys();
-
-        return () => {
-            isCancelled = true;
-        };
-    }, []);
 
     useEffect(() => {
         if (modelsLoading) {
@@ -446,7 +427,6 @@ const PromptComposer = ({
 
     const handleModelSelect = useCallback((id: string) => {
         setModel(id);
-        persistSelectedModel(id);
         setModelSelectorOpen(false);
     }, []);
 
