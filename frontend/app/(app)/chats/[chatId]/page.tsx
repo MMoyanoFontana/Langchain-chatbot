@@ -13,12 +13,14 @@ type ChatPageProps = {
 };
 
 type ThreadMessageResponse = {
+  id?: string;
   role: string;
   content: string;
   attachments?: BackendChatAttachment[] | null;
   citations?: BackendChatCitation[] | null;
   provider_code?: string | null;
   model_name?: string | null;
+  branch_index?: number;
 };
 
 type ThreadResponse = {
@@ -76,16 +78,20 @@ export default async function ChatPage({ params }: ChatPageProps) {
   }
 
   const thread = (await response.json()) as ThreadResponse;
-  const initialMessages: ConversationMessage[] = thread.messages.map((message) => ({
-    attachments:
-      message.attachments?.map(toChatAttachment).filter(isDefined) || undefined,
-    citations:
-      message.citations?.map(toConversationCitation).filter(isDefined) || undefined,
-    role: toConversationRole(message.role),
-    content: message.content,
-    providerCode: toProviderCode(message.provider_code),
-    modelName: message.model_name ?? null,
-  }));
+  const initialMessages: ConversationMessage[] = thread.messages
+    .filter((message) => message.role !== "tool")
+    .map((message) => ({
+      id: message.id,
+      attachments:
+        message.attachments?.map(toChatAttachment).filter(isDefined) || undefined,
+      citations:
+        message.citations?.map(toConversationCitation).filter(isDefined) || undefined,
+      role: toConversationRole(message.role),
+      content: message.content,
+      providerCode: toProviderCode(message.provider_code),
+      modelName: message.model_name ?? null,
+      branchIndex: message.branch_index ?? 0,
+    }));
   return (
     <ChatSession
       initialMessages={initialMessages}

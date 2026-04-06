@@ -297,6 +297,7 @@ class ChatMessage(Base):
         index=True,
     )
     model_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    branch_index: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     prompt_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     completion_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)

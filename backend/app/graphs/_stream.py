@@ -21,6 +21,7 @@ from app.graphs._nodes import (
     _get_db,
     _get_rag_service,
     _persist_assistant_message,
+    _persist_tool_message,
     _resolve_provider_api_key_value,
 )
 
@@ -218,6 +219,15 @@ async def _stream_model_and_persist(
         if tools_supported and accumulated is not None and accumulated.tool_calls:
             tool_call = accumulated.tool_calls[0]
             tool_content, retrieved_chunks = await _execute_tool_call(tool_call, state, config)
+            _persist_tool_message(
+                db=db,
+                thread_id=state["thread_id"],
+                tool_name=tool_call.get("name", ""),
+                tool_input=tool_call.get("args") or {},
+                tool_output=tool_content,
+                model_name=state["selected_model_id"],
+                provider_id=state["provider_id"],
+            )
             tool_message = ToolMessage(
                 content=tool_content,
                 tool_call_id=tool_call["id"],
@@ -240,7 +250,7 @@ async def _stream_model_and_persist(
         writer(error_message)
     else:
         assistant_content = "".join(collected_parts).strip() or "(No response)"
-        _persist_assistant_message(
+        message_id = _persist_assistant_message(
             db=db,
             thread_id=state["thread_id"],
             content=assistant_content,
@@ -250,6 +260,8 @@ async def _stream_model_and_persist(
         )
         if retrieved_chunks:
             writer("\x00CITATIONS:" + json.dumps(list(retrieved_chunks)))
+        if message_id:
+            writer("\x00MESSAGE_ID:" + message_id)
         # Update thread summary and user facts after each response (best-effort).
         asyncio.ensure_future(_run_memory_update(
             db=db,

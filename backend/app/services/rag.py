@@ -382,6 +382,109 @@ class RagService:
     def enabled(self) -> bool:
         return self._settings.enabled and self._vector_store is not None
 
+    async def create_pending_records(
+        self,
+        *,
+        db: Session,
+        user_id: str,
+        thread_id: str,
+        message_id: str | None,
+        attachments: list[RagAttachment],
+    ) -> tuple[list[str], IngestionResult]:
+        """Create PENDING IndexedDocument records without embedding or Pinecone upload.
+
+        Returns (new_document_ids, IngestionResult). The returned IDs need to be
+        embedded and upserted asynchronously via retry_document.
+        """
+        if not self.enabled or not attachments:
+            return [], IngestionResult()
+
+        notices: list[IngestionNotice] = []
+        new_document_ids: list[str] = []
+
+        for attachment in attachments:
+            try:
+                decoded = _decode_data_url(attachment, max_file_bytes=self._settings.max_file_bytes)
+            except AttachmentDecodeError as exc:
+                notices.append(_safe_notice(attachment.get("filename"), str(exc)))
+                LOGGER.warning(
+                    "rag_attachment_decode_failed thread_id=%s user_id=%s filename=%s error=%s",
+                    thread_id, user_id,
+                    _normalize_optional_text(attachment.get("filename")) or "<unnamed>", exc,
+                )
+                continue
+
+            existing_document = db.scalar(
+                select(IndexedDocument).where(
+                    IndexedDocument.user_id == user_id,
+                    IndexedDocument.thread_id == thread_id,
+                    IndexedDocument.checksum_sha256 == decoded.checksum_sha256,
+                )
+            )
+            if existing_document is not None and existing_document.status == DocumentIndexStatus.INDEXED:
+                if existing_document.source_message_id is None and message_id is not None:
+                    existing_document.source_message_id = message_id
+                    db.commit()
+                LOGGER.info(
+                    "rag_attachment_reused thread_id=%s user_id=%s document_id=%s filename=%s",
+                    thread_id, user_id, existing_document.id, existing_document.filename or "<unnamed>",
+                )
+                continue
+
+            document = existing_document or IndexedDocument(
+                user_id=user_id,
+                thread_id=thread_id,
+                source_message_id=message_id,
+                filename=decoded.filename,
+                media_type=decoded.media_type,
+                checksum_sha256=decoded.checksum_sha256,
+                byte_size=decoded.byte_size,
+                chunk_count=0,
+                pinecone_namespace=_build_namespace(self._settings, user_id),
+                status=DocumentIndexStatus.PENDING,
+                error_message=None,
+                indexed_at=None,
+            )
+            if existing_document is None:
+                db.add(document)
+
+            document.source_message_id = document.source_message_id or message_id
+            document.filename = decoded.filename or document.filename
+            document.media_type = decoded.media_type
+            document.byte_size = decoded.byte_size
+            document.pinecone_namespace = _build_namespace(self._settings, user_id)
+            document.status = DocumentIndexStatus.PENDING
+            document.error_message = None
+            db.commit()
+            db.refresh(document)
+
+            # Validate text extractability early so errors surface immediately.
+            try:
+                text = _extract_text(decoded)
+                chunks = _chunk_text(
+                    text,
+                    chunk_size=self._settings.chunk_size,
+                    chunk_overlap=self._settings.chunk_overlap,
+                )
+                if not chunks:
+                    raise AttachmentParseError("Attachment produced no indexable text chunks.")
+            except AttachmentParseError as exc:
+                document.status = DocumentIndexStatus.FAILED
+                document.error_message = str(exc)
+                document.chunk_count = 0
+                document.indexed_at = None
+                db.commit()
+                notices.append(_safe_notice(decoded.filename, str(exc)))
+                LOGGER.warning(
+                    "rag_attachment_parse_failed thread_id=%s user_id=%s document_id=%s filename=%s error=%s",
+                    thread_id, user_id, document.id, decoded.filename or "<unnamed>", exc,
+                )
+                continue
+
+            new_document_ids.append(document.id)
+
+        return new_document_ids, IngestionResult(tuple(notices))
+
     async def ingest_attachments(
         self,
         *,

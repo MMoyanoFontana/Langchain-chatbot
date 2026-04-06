@@ -74,32 +74,58 @@ export const parseCitationHeader = (
 };
 
 export const CITATIONS_SENTINEL = "\x00CITATIONS:";
+export const MESSAGE_ID_SENTINEL = "\x00MESSAGE_ID:";
 
 /**
- * Splits a stream chunk on the inline citations sentinel.
- * Returns `{ text, citations }` where `text` is the displayable content
- * (everything before the sentinel) and `citations` is the parsed list
- * (empty if no sentinel was found).
+ * Splits a stream chunk on inline sentinels (CITATIONS and MESSAGE_ID).
+ * Returns `{ text, citations, messageId }` where `text` is the displayable content.
+ * Sentinels are always emitted at the very end of the stream, so we can strip
+ * everything from the first sentinel onwards.
  */
 export const splitInlineCitations = (
   chunk: string
-): { text: string; citations: ConversationMessageCitation[] } => {
-  const idx = chunk.indexOf(CITATIONS_SENTINEL);
-  if (idx === -1) {
-    return { text: chunk, citations: [] };
+): { text: string; citations: ConversationMessageCitation[]; messageId: string | null } => {
+  // Find whichever sentinel comes first.
+  const citIdx = chunk.indexOf(CITATIONS_SENTINEL);
+  const msgIdx = chunk.indexOf(MESSAGE_ID_SENTINEL);
+
+  const firstIdx =
+    citIdx === -1 ? msgIdx : msgIdx === -1 ? citIdx : Math.min(citIdx, msgIdx);
+
+  if (firstIdx === -1) {
+    return { text: chunk, citations: [], messageId: null };
   }
 
-  const text = chunk.slice(0, idx);
-  const jsonPart = chunk.slice(idx + CITATIONS_SENTINEL.length);
-  try {
-    const parsed = JSON.parse(jsonPart);
-    const citations = Array.isArray(parsed)
-      ? parsed
-          .map((c) => toConversationCitation(c as BackendChatCitation))
-          .filter(isDefined)
-      : [];
-    return { text, citations };
-  } catch {
-    return { text, citations: [] };
+  const text = chunk.slice(0, firstIdx);
+  const tail = chunk.slice(firstIdx);
+
+  let citations: ConversationMessageCitation[] = [];
+  let messageId: string | null = null;
+
+  const citSentinelIdx = tail.indexOf(CITATIONS_SENTINEL);
+  if (citSentinelIdx !== -1) {
+    const afterCit = tail.slice(citSentinelIdx + CITATIONS_SENTINEL.length);
+    // JSON ends at the next sentinel or end of string.
+    const nextSentinel = afterCit.indexOf("\x00");
+    const jsonPart = nextSentinel === -1 ? afterCit : afterCit.slice(0, nextSentinel);
+    try {
+      const parsed = JSON.parse(jsonPart);
+      citations = Array.isArray(parsed)
+        ? parsed
+            .map((c) => toConversationCitation(c as BackendChatCitation))
+            .filter(isDefined)
+        : [];
+    } catch {
+      // ignore parse error
+    }
   }
+
+  const msgSentinelIdx = tail.indexOf(MESSAGE_ID_SENTINEL);
+  if (msgSentinelIdx !== -1) {
+    const afterMsg = tail.slice(msgSentinelIdx + MESSAGE_ID_SENTINEL.length);
+    const nextSentinel = afterMsg.indexOf("\x00");
+    messageId = (nextSentinel === -1 ? afterMsg : afterMsg.slice(0, nextSentinel)).trim() || null;
+  }
+
+  return { text, citations, messageId };
 };

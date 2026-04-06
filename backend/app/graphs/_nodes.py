@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import uuid as _uuid
 from dataclasses import dataclass
 from typing import Literal, TypedDict
 
@@ -55,7 +57,9 @@ class ChatGraphState(TypedDict, total=False):
     provider_api_key_id: str
     selected_provider_code: str
     selected_model_id: str
+    regenerate_from_message_id: str | None
     ingestion_notices: list["RagNoticeState"]
+    pending_document_ids: list[str]
     retrieved_chunks: list["RetrievedChunkState"]
     retrieval_notice: str | None
     thread_summary: str | None
@@ -88,6 +92,7 @@ class ChatGraphResult:
     provider_code: ProviderCode
     model_id: str
     thread_has_documents: bool
+    pending_document_ids: tuple[str, ...] = ()
 
 
 class ChatAttachmentState(TypedDict):
@@ -275,6 +280,35 @@ def _persist_assistant_message(
     model_name: str,
     provider_id: int,
     citations: list[RetrievedChunkState] | tuple[RetrievedChunkState, ...] | None = None,
+) -> str | None:
+    thread = db.get(ChatThread, thread_id)
+    if thread is None:
+        return None
+    message_id = str(_uuid.uuid4())
+    db.add(
+        ChatMessage(
+            id=message_id,
+            thread_id=thread_id,
+            role=MessageRole.ASSISTANT,
+            content=content,
+            citations=list(citations or []),
+            model_name=model_name,
+            provider_id=provider_id,
+        )
+    )
+    thread.updated_at = utc_now()
+    db.commit()
+    return message_id
+
+
+def _persist_tool_message(
+    db: Session,
+    thread_id: str,
+    tool_name: str,
+    tool_input: dict,
+    tool_output: str,
+    model_name: str,
+    provider_id: int,
 ) -> None:
     thread = db.get(ChatThread, thread_id)
     if thread is None:
@@ -282,9 +316,11 @@ def _persist_assistant_message(
     db.add(
         ChatMessage(
             thread_id=thread_id,
-            role=MessageRole.ASSISTANT,
-            content=content,
-            citations=list(citations or []),
+            role=MessageRole.TOOL,
+            content=json.dumps(
+                {"tool": tool_name, "input": tool_input, "output": tool_output},
+                ensure_ascii=False,
+            ),
             model_name=model_name,
             provider_id=provider_id,
         )
@@ -383,8 +419,9 @@ def _inject_memory_context(
 def _validate_request(state: ChatGraphState) -> dict[str, str | None | int]:
     prompt = (state.get("prompt") or "").strip()
     attachments = state.get("attachments") or []
+    is_regenerate = bool(state.get("regenerate_from_message_id"))
     base_model_prompt = _build_model_prompt(prompt, attachments)
-    if not base_model_prompt:
+    if not base_model_prompt and not is_regenerate:
         return _error_state(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
             "Message text or at least one attachment is required.",
@@ -411,8 +448,10 @@ def _validate_request(state: ChatGraphState) -> dict[str, str | None | int]:
         "model_id": model_id,
         "provider_code": provider_code,
         "ingestion_notices": [],
+        "pending_document_ids": [],
         "retrieved_chunks": [],
         "retrieval_notice": None,
+        "regenerate_from_message_id": state.get("regenerate_from_message_id"),
         "error_message": "",
         "error_status": 0,
     }
@@ -521,9 +560,45 @@ def _persist_user_message(
     if thread is None:
         return _error_state(status.HTTP_404_NOT_FOUND, "Chat thread not found.")
 
+    thread.provider_api_key_id = state["provider_api_key_id"]
+
+    # When regenerating, reuse the existing last user message instead of
+    # creating a duplicate row.
+    if state.get("regenerate_from_message_id"):
+        last_user_message = db.scalar(
+            select(ChatMessage)
+            .where(
+                ChatMessage.thread_id == state["thread_id"],
+                ChatMessage.role == MessageRole.USER,
+            )
+            .order_by(ChatMessage.created_at.desc())
+            .limit(1)
+        )
+        if last_user_message is None:
+            return _error_state(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "Cannot regenerate: no prior user message found in this thread.",
+            )
+        thread.updated_at = utc_now()
+        db.commit()
+        # Use the existing message's content as the prompt for the model.
+        return {
+            "prompt": last_user_message.content,
+            "base_model_prompt": _build_model_prompt(
+                last_user_message.content,
+                state.get("attachments") or [],
+            ),
+            "model_prompt": _build_model_prompt(
+                last_user_message.content,
+                state.get("attachments") or [],
+            ),
+            "user_message_id": last_user_message.id,
+            "error_message": "",
+            "error_status": 0,
+        }
+
     if not thread.title:
         thread.title = _build_thread_title(state["prompt"], state.get("attachments") or [])
-    thread.provider_api_key_id = state["provider_api_key_id"]
 
     message = ChatMessage(
         thread_id=thread.id,
@@ -552,21 +627,22 @@ async def _ingest_attachments(
     if not attachments:
         return {
             "ingestion_notices": [],
+            "pending_document_ids": [],
             "error_message": "",
             "error_status": 0,
         }
 
     rag_service = _get_rag_service(config)
-    result = await rag_service.ingest_attachments(
+    document_ids, result = await rag_service.create_pending_records(
         db=_get_db(config),
         user_id=state["user_id"],
         thread_id=state["thread_id"],
         message_id=state["user_message_id"],
         attachments=attachments,
-        preferred_provider_api_key_id=state["provider_api_key_id"],
     )
     return {
         "ingestion_notices": _serialize_ingestion_notices(result.notices),
+        "pending_document_ids": document_ids,
         "error_message": "",
         "error_status": 0,
     }

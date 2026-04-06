@@ -22,17 +22,30 @@ import type {
   ConversationMessageCitation,
 } from "@/components/ai-elements/conversation";
 import { ModelSelectorLogo } from "@/components/ai-elements/model-selector";
-import { Message, MessageContent, MessageResponse } from "@/components/ai-elements/message";
+import {
+  Message,
+  MessageAction,
+  MessageActions,
+  MessageBranch,
+  MessageBranchContent,
+  MessageBranchNext,
+  MessageBranchPage,
+  MessageBranchPrevious,
+  MessageBranchSelector,
+  MessageContent,
+  MessageResponse,
+  MessageToolbar,
+} from "@/components/ai-elements/message";
 import { Shimmer } from "@/components/ai-elements/shimmer";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { splitInlineCitations } from "@/lib/chat-citations";
 import { toBackendChatAttachment } from "@/lib/chat-attachments";
-import { FileTextIcon, ServerIcon } from "lucide-react";
+import { CheckIcon, CopyIcon, FileTextIcon, RefreshCwIcon, ServerIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
 import type { BackendProviderCode } from "@/contexts/chat-composer-context";
 import { useChatComposer } from "@/contexts/chat-composer-context";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 const normalizeMessageText = (message: PromptInputMessage) => message.text?.trim() ?? "";
 
@@ -166,6 +179,31 @@ const MessageCitations = ({ citations }: MessageCitationsProps) => {
   );
 };
 
+interface CopyButtonProps {
+  text: string;
+}
+
+const CopyButton = ({ text }: CopyButtonProps) => {
+  const [copied, setCopied] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleCopy = useCallback(() => {
+    void navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      if (timerRef.current) clearTimeout(timerRef.current);
+      timerRef.current = setTimeout(() => setCopied(false), 2000);
+    });
+  }, [text]);
+
+  return (
+    <MessageAction
+      tooltip={copied ? "Copied" : "Copy"}
+      onClick={handleCopy}
+    >
+      {copied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
+    </MessageAction>
+  );
+};
 
 
 const ChatSession = ({ initialMessages, initialThreadId }: ChatSessionProps) => {
@@ -222,32 +260,38 @@ const ChatSession = ({ initialMessages, initialThreadId }: ChatSessionProps) => 
     message: PromptInputMessage;
     modelId: string;
     providerCode: BackendProviderCode;
+    regenerateFromMessageId?: string;
   }) => {
     const userContent = normalizeMessageText(payload.message);
     const userAttachments = payload.message.files ?? [];
     const attachmentCount = userAttachments.length;
     const reasoningLabel = buildPendingReasoningLabel(attachmentCount);
 
-    if (!userContent && userAttachments.length === 0) {
+    if (!userContent && userAttachments.length === 0 && !payload.regenerateFromMessageId) {
       return;
     }
 
     let assistantMessageIndex = -1;
-    setMessages((prev) => [
-      ...prev,
-      { role: "user", content: userContent, attachments: userAttachments },
-      (() => {
-        assistantMessageIndex = prev.length + 1;
-        return {
+    setMessages((prev) => {
+      const base = payload.regenerateFromMessageId
+        ? prev
+        : [
+            ...prev,
+            { role: "user" as const, content: userContent, attachments: userAttachments },
+          ];
+      assistantMessageIndex = base.length;
+      return [
+        ...base,
+        {
           role: "assistant" as const,
           content: "",
           providerCode: payload.providerCode,
           modelName: payload.modelId,
           reasoningLabel,
           reasoningStreaming: true,
-        };
-      })(),
-    ]);
+        },
+      ];
+    });
 
     const shouldRedirectToThread = !hasThreadRoute;
 
@@ -259,6 +303,9 @@ const ChatSession = ({ initialMessages, initialThreadId }: ChatSessionProps) => 
           threadId,
           modelId: payload.modelId,
           providerCode: payload.providerCode,
+          ...(payload.regenerateFromMessageId
+            ? { regenerateFromMessageId: payload.regenerateFromMessageId }
+            : {}),
         }),
         headers: { "Content-Type": "application/json" },
         method: "POST",
@@ -278,8 +325,6 @@ const ChatSession = ({ initialMessages, initialThreadId }: ChatSessionProps) => 
         setThreadId(resolvedThreadId);
       }
       if (resolvedThreadId && shouldRedirectToThread) {
-        // Keep component mounted so streamed assistant tokens remain visible
-        // while still updating the URL to the thread route.
         window.history.replaceState(
           window.history.state,
           "",
@@ -300,11 +345,14 @@ const ChatSession = ({ initialMessages, initialThreadId }: ChatSessionProps) => 
         }
 
         const raw = decoder.decode(value, { stream: true });
-        const { text, citations } = splitInlineCitations(raw);
+        const { text, citations, messageId } = splitInlineCitations(raw);
         assistantContent += text;
 
         if (citations.length > 0) {
           updateAssistantMessageMeta(assistantMessageIndex, { citations });
+        }
+        if (messageId) {
+          updateAssistantMessageMeta(assistantMessageIndex, { id: messageId });
         }
         if (!hasReceivedFirstChunk) {
           hasReceivedFirstChunk = true;
@@ -312,7 +360,9 @@ const ChatSession = ({ initialMessages, initialThreadId }: ChatSessionProps) => 
             reasoningStreaming: false,
           });
         }
-        updateAssistantMessage(assistantMessageIndex, assistantContent);
+        if (text) {
+          updateAssistantMessage(assistantMessageIndex, assistantContent);
+        }
       }
 
       assistantContent += decoder.decode();
@@ -324,9 +374,6 @@ const ChatSession = ({ initialMessages, initialThreadId }: ChatSessionProps) => 
         assistantContent.trim() ? assistantContent : "(No response)"
       );
 
-      // Sync the Next.js router with the URL set via replaceState during streaming.
-      // Without this, Next.js still thinks the route is "/" and clicking "New Chat"
-      // would be a same-route no-op that leaves the old messages visible.
       if (shouldRedirectToThread && resolvedThreadId) {
         router.replace(`/chats/${resolvedThreadId}`);
       }
@@ -341,6 +388,36 @@ const ChatSession = ({ initialMessages, initialThreadId }: ChatSessionProps) => 
       updateAssistantMessage(assistantMessageIndex, `Error: ${errorMessage}`);
     }
   }, [hasThreadRoute, router, threadId, updateAssistantMessage, updateAssistantMessageMeta]);
+
+  const handleRegenerateFrom = useCallback(
+    async (
+      messageId: string,
+      modelId: string,
+      providerCode: BackendProviderCode
+    ) => {
+      if (!threadId) return;
+
+      // Delete from this assistant message forward.
+      await fetch(
+        `/api/threads/${threadId}/messages/${messageId}/from-here`,
+        { method: "DELETE" }
+      ).catch(() => null);
+
+      // Remove messages from this point in local state and regenerate.
+      setMessages((prev) => {
+        const idx = prev.findIndex((m) => m.id === messageId);
+        return idx === -1 ? prev : prev.slice(0, idx);
+      });
+
+      await handleSubmitMessage({
+        message: { text: "", files: [] },
+        modelId,
+        providerCode,
+        regenerateFromMessageId: messageId,
+      });
+    },
+    [threadId, handleSubmitMessage]
+  );
 
   const { register, unregister } = useChatComposer();
 
@@ -365,6 +442,8 @@ const ChatSession = ({ initialMessages, initialThreadId }: ChatSessionProps) => 
             />
           ) : (
             messages.map((message, index) => {
+              if (message.role === "tool") return null;
+
               const from =
                 message.role === "user"
                   ? "user"
@@ -375,6 +454,7 @@ const ChatSession = ({ initialMessages, initialThreadId }: ChatSessionProps) => 
               const trimmedContent = message.content.trim();
               const hasAttachments = Boolean(message.attachments?.length);
               const hasCitations = Boolean(message.citations?.length);
+              const isStreaming = message.reasoningStreaming;
 
               return (
                 <Message from={from} key={`${index}-${message.role}`}>
@@ -386,43 +466,78 @@ const ChatSession = ({ initialMessages, initialThreadId }: ChatSessionProps) => 
                     />
                   ) : null}
                   {from === "assistant" ? (
-                    <div className="flex items-start gap-2.5">
-                      <div className="bg-muted/40 border-border mt-0.5 flex size-8 shrink-0 items-center justify-center overflow-hidden rounded-full border">
-                        {message.providerCode && message.providerCode !== "other" ? (
-                          <ModelSelectorLogo
-                            provider={toProviderLogo(message.providerCode)}
-                            className="size-5"
-                          />
-                        ) : (
-                          <ServerIcon className="text-muted-foreground size-5" />
-                        )}
-                      </div>
-                      <MessageContent>
-                        {message.reasoningStreaming ? (
-                          <div className="text-muted-foreground mb-3 flex items-center gap-2 text-sm">
-                            <span className="bg-current size-2 animate-pulse rounded-full" />
-                            <Shimmer duration={1.2}>
-                              {message.reasoningLabel ?? "Processing..."}
-                            </Shimmer>
+                    <MessageBranch>
+                      <MessageBranchContent>
+                        <div className="flex items-start gap-2.5">
+                          <div className="bg-muted/40 border-border mt-0.5 flex size-8 shrink-0 items-center justify-center overflow-hidden rounded-full border">
+                            {message.providerCode && message.providerCode !== "other" ? (
+                              <ModelSelectorLogo
+                                provider={toProviderLogo(message.providerCode)}
+                                className="size-5"
+                              />
+                            ) : (
+                              <ServerIcon className="text-muted-foreground size-5" />
+                            )}
                           </div>
-                        ) : null}
-                        {metaText ? (
-                          <div className="text-muted-foreground mb-1 text-xs">
-                            {metaText}
-                          </div>
-                        ) : null}
-                        {trimmedContent ? (
-                          <MessageResponse>{message.content}</MessageResponse>
-                        ) : null}
-                        {hasCitations ? (
-                          <MessageCitations citations={message.citations ?? []} />
-                        ) : null}
-                      </MessageContent>
-                    </div>
+                          <MessageContent>
+                            {message.reasoningStreaming ? (
+                              <div className="text-muted-foreground mb-3 flex items-center gap-2 text-sm">
+                                <span className="bg-current size-2 animate-pulse rounded-full" />
+                                <Shimmer duration={1.2}>
+                                  {message.reasoningLabel ?? "Processing..."}
+                                </Shimmer>
+                              </div>
+                            ) : null}
+                            {metaText ? (
+                              <div className="text-muted-foreground mb-1 text-xs">
+                                {metaText}
+                              </div>
+                            ) : null}
+                            {trimmedContent ? (
+                              <MessageResponse>{message.content}</MessageResponse>
+                            ) : null}
+                            {hasCitations ? (
+                              <MessageCitations citations={message.citations ?? []} />
+                            ) : null}
+                          </MessageContent>
+                        </div>
+                      </MessageBranchContent>
+                      {!isStreaming && trimmedContent ? (
+                        <MessageToolbar>
+                          <MessageBranchSelector>
+                            <MessageBranchPrevious />
+                            <MessageBranchPage />
+                            <MessageBranchNext />
+                          </MessageBranchSelector>
+                          <MessageActions>
+                            <CopyButton text={trimmedContent} />
+                            {message.id && message.modelName && message.providerCode ? (
+                              <MessageAction
+                                tooltip="Regenerate"
+                                onClick={() => {
+                                  void handleRegenerateFrom(
+                                    message.id!,
+                                    message.modelName!,
+                                    message.providerCode!
+                                  );
+                                }}
+                              >
+                                <RefreshCwIcon className="size-3.5" />
+                              </MessageAction>
+                            ) : null}
+                          </MessageActions>
+                        </MessageToolbar>
+                      ) : null}
+                    </MessageBranch>
                   ) : trimmedContent ? (
-                    <MessageContent>
-                      <MessageResponse>{message.content}</MessageResponse>
-                    </MessageContent>
+                    <>
+                      <MessageContent>
+                        <MessageResponse>{message.content}</MessageResponse>
+                      </MessageContent>
+                      <MessageActions className="justify-end">
+                        <CopyButton text={trimmedContent} />
+                      </MessageActions>
+                    </>
                   ) : null}
                 </Message>
               );

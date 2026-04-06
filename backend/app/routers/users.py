@@ -8,7 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.db import get_db
-from app.models import ChatMessage, ChatThread, DocumentIndexStatus, IndexedDocument, Provider, ProviderApiKey, ProviderCode, User
+from app.models import ChatMessage, ChatThread, DocumentIndexStatus, IndexedDocument, Provider, ProviderApiKey, ProviderCode, User, UserMemory, utc_now
 from app.schemas import (
     ChatMessageRead,
     ChatThreadDocumentRead,
@@ -20,6 +20,8 @@ from app.schemas import (
     ProviderApiKeyUpsert,
     ProviderRead,
     ProviderSettingsRead,
+    UserMemoryRead,
+    UserMemoryUpdate,
     UserRead,
     UserUpdate,
 )
@@ -524,3 +526,124 @@ def retry_current_user_thread_document(
     db: Session = Depends(get_db),
 ) -> ChatThreadDocumentRead:
     return retry_user_thread_document(user.id, thread_id, document_id, db)
+
+
+# ---------------------------------------------------------------------------
+# Message management
+# ---------------------------------------------------------------------------
+
+def delete_messages_from(user_id: str, thread_id: str, message_id: str, db: Session) -> None:
+    thread = db.scalar(
+        select(ChatThread).where(ChatThread.id == thread_id, ChatThread.user_id == user_id)
+    )
+    if thread is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found.")
+
+    pivot = db.scalar(
+        select(ChatMessage).where(
+            ChatMessage.id == message_id, ChatMessage.thread_id == thread_id
+        )
+    )
+    if pivot is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Message not found.")
+
+    to_delete = list(
+        db.scalars(
+            select(ChatMessage)
+            .where(
+                ChatMessage.thread_id == thread_id,
+                ChatMessage.created_at >= pivot.created_at,
+            )
+            .order_by(ChatMessage.created_at)
+        )
+    )
+    for msg in to_delete:
+        db.delete(msg)
+    thread.updated_at = utc_now()
+    db.commit()
+
+
+@router.delete(
+    "/me/threads/{thread_id}/messages/{message_id}/from-here",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_current_user_messages_from(
+    thread_id: str,
+    message_id: str,
+    user: User = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    delete_messages_from(user.id, thread_id, message_id, db)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ---------------------------------------------------------------------------
+# User memory management
+# ---------------------------------------------------------------------------
+
+def list_user_memories(user_id: str, db: Session) -> list[UserMemory]:
+    return list(
+        db.scalars(
+            select(UserMemory)
+            .where(UserMemory.user_id == user_id)
+            .order_by(UserMemory.updated_at.desc())
+            .limit(100)
+        )
+    )
+
+
+def update_user_memory(user_id: str, key: str, payload: UserMemoryUpdate, db: Session) -> UserMemory:
+    memory = db.scalar(
+        select(UserMemory).where(
+            UserMemory.user_id == user_id,
+            UserMemory.key == key,
+        )
+    )
+    if memory is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Memory fact not found.")
+    memory.value = payload.value
+    memory.updated_at = utc_now()
+    db.commit()
+    db.refresh(memory)
+    return memory
+
+
+def delete_user_memory(user_id: str, key: str, db: Session) -> None:
+    memory = db.scalar(
+        select(UserMemory).where(
+            UserMemory.user_id == user_id,
+            UserMemory.key == key,
+        )
+    )
+    if memory is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Memory fact not found.")
+    db.delete(memory)
+    db.commit()
+
+
+@router.get("/me/memories", response_model=list[UserMemoryRead])
+def list_current_user_memories(
+    user: User = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> list[UserMemory]:
+    return list_user_memories(user.id, db)
+
+
+@router.patch("/me/memories/{key}", response_model=UserMemoryRead)
+def update_current_user_memory(
+    key: str,
+    payload: UserMemoryUpdate,
+    user: User = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> UserMemory:
+    return update_user_memory(user.id, key, payload, db)
+
+
+@router.delete("/me/memories/{key}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_current_user_memory(
+    key: str,
+    user: User = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    delete_user_memory(user.id, key, db)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

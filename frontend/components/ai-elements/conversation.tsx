@@ -102,6 +102,7 @@ export const ConversationScrollButton = ({
 };
 
 export interface ConversationMessage {
+  id?: string;
   role: "user" | "assistant" | "system" | "data" | "tool";
   content: string;
   attachments?: FileUIPart[];
@@ -111,6 +112,7 @@ export interface ConversationMessage {
   reasoning?: string | null;
   reasoningLabel?: string | null;
   reasoningStreaming?: boolean;
+  branchIndex?: number;
 }
 
 export interface ConversationMessageCitation {

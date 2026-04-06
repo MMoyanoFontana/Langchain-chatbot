@@ -136,6 +136,10 @@ class ChatRequest(BaseModel):
         validation_alias=AliasChoices("provider_code", "providerCode"),
     )
     attachments: list[ChatAttachment] = Field(default_factory=list)
+    regenerate_from_message_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("regenerate_from_message_id", "regenerateFromMessageId"),
+    )
 
 
 class ChatCitation(BaseModel):
@@ -156,6 +160,7 @@ class ChatMessageRead(BaseModel):
     citations: list[ChatCitation] = Field(default_factory=list)
     provider_code: ProviderCode | None = None
     model_name: str | None
+    branch_index: int = 0
     created_at: datetime
 
 
@@ -197,3 +202,15 @@ class ChatThreadRead(BaseModel):
 
 class ChatThreadUpdate(BaseModel):
     title: str = Field(min_length=1, max_length=CHAT_THREAD_TITLE_MAX_LENGTH)
+
+
+class UserMemoryRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    key: str
+    value: str
+    updated_at: datetime
+
+
+class UserMemoryUpdate(BaseModel):
+    value: str = Field(min_length=1, max_length=200)

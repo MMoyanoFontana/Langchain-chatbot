@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -10,6 +12,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from starlette.background import BackgroundTask
 from sqlalchemy import text
+
+LOGGER = logging.getLogger(__name__)
 
 from app.db import SessionLocal, init_db
 from app.graphs.chat_graph import (
@@ -55,6 +59,25 @@ app.include_router(users_router)
 app.include_router(catalog_router)
 
 
+async def _index_documents_in_background(
+    user_id: str, thread_id: str, document_ids: list[str]
+) -> None:
+    if not document_ids:
+        return
+    rag_service = get_rag_service()
+    with SessionLocal() as db:
+        for doc_id in document_ids:
+            try:
+                await rag_service.retry_document(
+                    db=db, user_id=user_id, thread_id=thread_id, document_id=doc_id
+                )
+            except Exception:
+                LOGGER.exception(
+                    "background_index_failed user_id=%s thread_id=%s document_id=%s",
+                    user_id, thread_id, doc_id,
+                )
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     with SessionLocal() as db:
@@ -84,6 +107,15 @@ async def chat(payload: ChatRequest, user: User = Depends(require_current_user))
     except Exception:
         close_db_session()
         raise
+
+    if graph_result.pending_document_ids:
+        asyncio.ensure_future(
+            _index_documents_in_background(
+                user_id=graph_result.user_id,
+                thread_id=graph_result.thread_id,
+                document_ids=list(graph_result.pending_document_ids),
+            )
+        )
 
     stream_input = build_model_stream_input(graph_result)
     stream_config = {

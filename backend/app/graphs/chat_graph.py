@@ -104,6 +104,7 @@ async def run_chat_graph(
         "model_id": payload.model_id,
         "provider_code": payload.provider_code.value if payload.provider_code is not None else None,
         "user_id": user_id,
+        "regenerate_from_message_id": payload.regenerate_from_message_id,
     }
     final_state = await CHAT_GRAPH.ainvoke(
         graph_input,
@@ -134,6 +135,7 @@ async def run_chat_graph(
         provider_code=selected_provider_code,
         model_id=_require_str(final_state, "selected_model_id"),
         thread_has_documents=bool(final_state.get("thread_has_documents", False)),
+        pending_document_ids=tuple(final_state.get("pending_document_ids") or []),
     )
 
 

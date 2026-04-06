@@ -101,6 +101,9 @@ export const MessageAction = ({
   size = "icon-sm",
   ...props
 }: MessageActionProps) => {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
   const button = (
     <Button size={size} type="button" variant={variant} {...props}>
       {children}
@@ -108,11 +111,11 @@ export const MessageAction = ({
     </Button>
   );
 
-  if (tooltip) {
+  if (tooltip && mounted) {
     return (
       <TooltipProvider>
         <Tooltip>
-          <TooltipTrigger>{button}</TooltipTrigger>
+          <TooltipTrigger render={button} />
           <TooltipContent>
             <p>{tooltip}</p>
           </TooltipContent>

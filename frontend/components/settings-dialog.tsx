@@ -3,6 +3,8 @@
 import * as React from "react"
 import { useRouter } from "next/navigation"
 import {
+  BrainIcon,
+  PencilIcon,
   Save,
   Server,
   Settings2,
@@ -50,7 +52,7 @@ type NavItem = {
   icon: React.ComponentType<React.SVGProps<SVGSVGElement>>
 }
 
-type SettingsTab = "profile" | "providers" | "general"
+type SettingsTab = "profile" | "providers" | "general" | "memory"
 type ThemeMode = "light" | "dark" | "system"
 type Language = "en" | "es"
 type BackendProviderCode =
@@ -103,6 +105,12 @@ type ProviderApiKeyResponse = {
   provider: {
     code: BackendProviderCode
   }
+}
+
+type UserMemoryResponse = {
+  key: string
+  value: string
+  updated_at: string
 }
 
 const SETTINGS_STORAGE_KEY = "langchain-chatbot.settings.v1"
@@ -177,6 +185,12 @@ const nav: NavItem[] = [
     description: "Add API keys for cloud providers.",
     icon: KeyRound,
   },
+  {
+    id: "memory",
+    name: "Memory",
+    description: "Facts the assistant has learned about you.",
+    icon: BrainIcon,
+  },
 ]
 
 const normalizeOllamaEndpoint = (value: string) => {
@@ -250,6 +264,11 @@ export function SettingsDialog({
   const [profileReady, setProfileReady] = React.useState(false)
   const [deleteDialogOpen, setDeleteDialogOpen] = React.useState(false)
   const [isDeletingUser, setIsDeletingUser] = React.useState(false)
+  const [memories, setMemories] = React.useState<UserMemoryResponse[]>([])
+  const [memoryDrafts, setMemoryDrafts] = React.useState<Record<string, string>>({})
+  const [memoryEditingKey, setMemoryEditingKey] = React.useState<string | null>(null)
+  const [memoryError, setMemoryError] = React.useState<string | null>(null)
+  const [memoryActionKey, setMemoryActionKey] = React.useState<string | null>(null)
 
   React.useEffect(() => {
     try {
@@ -312,6 +331,16 @@ export function SettingsDialog({
       setProviders(mappedProviders)
     } catch {
       setProviderError("Could not load provider settings.")
+    }
+
+    try {
+      const memoriesResponse = await fetch("/api/user/memories", { cache: "no-store" })
+      if (memoriesResponse.ok) {
+        const data = (await memoriesResponse.json()) as UserMemoryResponse[]
+        setMemories(data)
+      }
+    } catch {
+      // Non-critical — leave memories empty.
     }
   }, [])
 
@@ -453,6 +482,53 @@ export function SettingsDialog({
       )
     } finally {
       setProviderActionLoadingId(null)
+    }
+  }
+
+  const saveMemoryEdit = async (key: string) => {
+    const draft = (memoryDrafts[key] ?? "").trim()
+    if (!draft || memoryActionKey) {
+      return
+    }
+    setMemoryActionKey(key)
+    setMemoryError(null)
+    try {
+      const response = await fetch(`/api/user/memories/${encodeURIComponent(key)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value: draft }),
+      })
+      if (!response.ok) {
+        throw new Error(await parseApiError(response, "Could not update memory."))
+      }
+      const updated = (await response.json()) as UserMemoryResponse
+      setMemories((prev) => prev.map((m) => (m.key === key ? updated : m)))
+      setMemoryEditingKey(null)
+    } catch (error) {
+      setMemoryError(error instanceof Error ? error.message : "Could not update memory.")
+    } finally {
+      setMemoryActionKey(null)
+    }
+  }
+
+  const deleteMemory = async (key: string) => {
+    if (memoryActionKey) {
+      return
+    }
+    setMemoryActionKey(key)
+    setMemoryError(null)
+    try {
+      const response = await fetch(`/api/user/memories/${encodeURIComponent(key)}`, {
+        method: "DELETE",
+      })
+      if (!response.ok) {
+        throw new Error(await parseApiError(response, "Could not delete memory."))
+      }
+      setMemories((prev) => prev.filter((m) => m.key !== key))
+    } catch (error) {
+      setMemoryError(error instanceof Error ? error.message : "Could not delete memory.")
+    } finally {
+      setMemoryActionKey(null)
     }
   }
 
@@ -660,6 +736,102 @@ export function SettingsDialog({
               </p>
             )}
           </div>
+        </section>
+      )
+    }
+
+    if (activeTab === "memory") {
+      return (
+        <section className="max-w-3xl py-4">
+          {memoryError ? (
+            <p className="text-destructive text-sm mb-3">{memoryError}</p>
+          ) : null}
+          {memories.length === 0 ? (
+            <p className="text-muted-foreground text-sm">
+              No facts learned yet. The assistant will remember things you tell it as you chat.
+            </p>
+          ) : (
+            <div className="grid gap-2">
+              {memories.map((memory) => {
+                const isEditing = memoryEditingKey === memory.key
+                const isLoading = memoryActionKey === memory.key
+
+                return (
+                  <div
+                    key={memory.key}
+                    className="grid gap-1.5 border-b pb-2 md:grid-cols-[160px_1fr_auto] md:items-start"
+                  >
+                    <span className="text-xs font-medium pt-1.5 text-muted-foreground break-all">
+                      {memory.key}
+                    </span>
+                    {isEditing ? (
+                      <Input
+                        autoFocus
+                        value={memoryDrafts[memory.key] ?? memory.value}
+                        onChange={(e) =>
+                          setMemoryDrafts((prev) => ({
+                            ...prev,
+                            [memory.key]: e.target.value,
+                          }))
+                        }
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            void saveMemoryEdit(memory.key)
+                          } else if (e.key === "Escape") {
+                            setMemoryEditingKey(null)
+                          }
+                        }}
+                        disabled={isLoading}
+                      />
+                    ) : (
+                      <span className="text-sm pt-1">{memory.value}</span>
+                    )}
+                    <div className="flex items-center gap-1">
+                      {isEditing ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon-sm"
+                          aria-label="Save"
+                          disabled={isLoading}
+                          onClick={() => void saveMemoryEdit(memory.key)}
+                        >
+                          <Save />
+                        </Button>
+                      ) : (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon-sm"
+                          aria-label="Edit"
+                          disabled={isLoading}
+                          onClick={() => {
+                            setMemoryDrafts((prev) => ({
+                              ...prev,
+                              [memory.key]: memory.value,
+                            }))
+                            setMemoryEditingKey(memory.key)
+                          }}
+                        >
+                          <PencilIcon />
+                        </Button>
+                      )}
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon-sm"
+                        aria-label="Delete"
+                        disabled={isLoading}
+                        onClick={() => void deleteMemory(memory.key)}
+                      >
+                        <Trash2 />
+                      </Button>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
         </section>
       )
     }

@@ -14,6 +14,7 @@ type ChatRequestBody = {
   modelId?: string;
   providerCode?: string;
   attachments?: ChatAttachmentRequest[];
+  regenerateFromMessageId?: string;
 };
 
 export async function POST(request: NextRequest) {
@@ -27,6 +28,7 @@ export async function POST(request: NextRequest) {
   let modelId = "";
   let providerCode = "";
   let attachments: ChatAttachmentRequest[] = [];
+  let regenerateFromMessageId = "";
 
   try {
     const body = (await request.json()) as ChatRequestBody;
@@ -35,11 +37,12 @@ export async function POST(request: NextRequest) {
     modelId = body.modelId?.trim() ?? "";
     providerCode = body.providerCode?.trim().toLowerCase() ?? "";
     attachments = Array.isArray(body.attachments) ? body.attachments : [];
+    regenerateFromMessageId = body.regenerateFromMessageId?.trim() ?? "";
   } catch {
     return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
   }
 
-  if (!prompt && attachments.length === 0) {
+  if (!prompt && attachments.length === 0 && !regenerateFromMessageId) {
     return NextResponse.json(
       { error: "Message text or at least one attachment is required." },
       { status: 400 }
@@ -58,9 +61,13 @@ export async function POST(request: NextRequest) {
     model_id: string;
     provider_code: string;
     attachments: ChatAttachmentRequest[];
+    regenerate_from_message_id?: string;
   } = { prompt, model_id: modelId, provider_code: providerCode, attachments };
   if (threadId) {
     payload.thread_id = threadId;
+  }
+  if (regenerateFromMessageId) {
+    payload.regenerate_from_message_id = regenerateFromMessageId;
   }
 
   try {
