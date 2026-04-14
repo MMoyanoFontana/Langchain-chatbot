@@ -51,7 +51,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["Authorization", "Content-Type", "Accept", "X-Session-Token"],
-    expose_headers=["X-Thread-Id"],
+    expose_headers=["X-Thread-Id", "X-User-Message-Id"],
 )
 
 app.include_router(auth_router)
@@ -140,6 +140,8 @@ async def chat(payload: ChatRequest, user: User = Depends(require_current_user))
             close_db_session()
 
     response_headers = {"X-Thread-Id": graph_result.thread_id}
+    if graph_result.user_message_id:
+        response_headers["X-User-Message-Id"] = graph_result.user_message_id
 
     return StreamingResponse(
         stream_llm(),

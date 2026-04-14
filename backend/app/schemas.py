@@ -140,6 +140,16 @@ class ChatRequest(BaseModel):
         default=None,
         validation_alias=AliasChoices("regenerate_from_message_id", "regenerateFromMessageId"),
     )
+    continue_from_message_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("continue_from_message_id", "continueFromMessageId"),
+    )
+    compare_with_user_message_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "compare_with_user_message_id", "compareWithUserMessageId"
+        ),
+    )
 
 
 class ChatCitation(BaseModel):
@@ -160,7 +170,13 @@ class ChatMessageRead(BaseModel):
     citations: list[ChatCitation] = Field(default_factory=list)
     provider_code: ProviderCode | None = None
     model_name: str | None
+    parent_message_id: str | None = None
     branch_index: int = 0
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    total_tokens: int | None = None
+    latency_ms: int | None = None
+    time_to_first_token_ms: int | None = None
     created_at: datetime
 
 

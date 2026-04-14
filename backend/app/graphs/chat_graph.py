@@ -17,9 +17,11 @@ from app.graphs._nodes import (
     ChatGraphResult,
     ChatGraphState,
     ChatModelStreamState,
+    HistoryMessageState,
     RetrievedChunkState,
     _error_node,
     _ingest_attachments,
+    _load_history,
     _load_memory,
     _load_thread_history,
     _normalize_optional_text,
@@ -43,6 +45,7 @@ def _build_chat_graph():
     graph.add_node("resolve_user_provider_key", _resolve_user_provider_key)
     graph.add_node("persist_user_message", _persist_user_message)
     graph.add_node("ingest_attachments", _ingest_attachments)
+    graph.add_node("load_history", _load_history)
     graph.add_node("retrieve_context", _retrieve_context)
     graph.add_node("error", _error_node)
 
@@ -68,7 +71,8 @@ def _build_chat_graph():
         _route_after_step,
         {"continue": "ingest_attachments", "error": "error"},
     )
-    graph.add_edge("ingest_attachments", "retrieve_context")
+    graph.add_edge("ingest_attachments", "load_history")
+    graph.add_edge("load_history", "retrieve_context")
     graph.add_edge("retrieve_context", END)
     graph.add_edge("error", END)
 
@@ -105,6 +109,8 @@ async def run_chat_graph(
         "provider_code": payload.provider_code.value if payload.provider_code is not None else None,
         "user_id": user_id,
         "regenerate_from_message_id": payload.regenerate_from_message_id,
+        "continue_from_message_id": payload.continue_from_message_id,
+        "compare_with_user_message_id": payload.compare_with_user_message_id,
     }
     final_state = await CHAT_GRAPH.ainvoke(
         graph_input,
@@ -127,6 +133,10 @@ async def run_chat_graph(
     selected_provider_code = ProviderCode(_require_str(final_state, "selected_provider_code"))
     return ChatGraphResult(
         prompt=_require_str(final_state, "model_prompt"),
+        system_addendum=final_state.get("system_addendum") or "",
+        history_messages=tuple(final_state.get("history_messages") or []),
+        dropped_history_count=int(final_state.get("dropped_history_count") or 0),
+        dropped_history_message_ids=tuple(final_state.get("dropped_history_message_ids") or []),
         retrieved_chunks=tuple(final_state.get("retrieved_chunks") or []),
         user_id=_require_str(final_state, "user_id"),
         thread_id=_require_str(final_state, "thread_id"),
@@ -136,12 +146,19 @@ async def run_chat_graph(
         model_id=_require_str(final_state, "selected_model_id"),
         thread_has_documents=bool(final_state.get("thread_has_documents", False)),
         pending_document_ids=tuple(final_state.get("pending_document_ids") or []),
+        parent_message_id=final_state.get("parent_message_id"),
+        next_branch_index=final_state.get("next_branch_index", 0),
+        user_message_id=final_state.get("user_message_id"),
     )
 
 
 def build_model_stream_input(result: ChatGraphResult) -> ChatModelStreamState:
     return {
         "prompt": result.prompt,
+        "system_addendum": result.system_addendum,
+        "history_messages": list(result.history_messages),
+        "dropped_history_count": result.dropped_history_count,
+        "dropped_history_message_ids": list(result.dropped_history_message_ids),
         "retrieved_chunks": list(result.retrieved_chunks),
         "user_id": result.user_id,
         "thread_id": result.thread_id,
@@ -150,4 +167,6 @@ def build_model_stream_input(result: ChatGraphResult) -> ChatModelStreamState:
         "selected_provider_code": result.provider_code.value,
         "selected_model_id": result.model_id,
         "thread_has_documents": result.thread_has_documents,
+        "parent_message_id": result.parent_message_id,
+        "next_branch_index": result.next_branch_index,
     }

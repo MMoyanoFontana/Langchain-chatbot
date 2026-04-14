@@ -25,6 +25,7 @@ from app.models import (
 )
 from app.schemas import ChatAttachment, ChatRequest
 from app.security import EncryptionConfigError, decrypt_secret
+from app.services.history import select_history_window
 from app.services.memory import MemoryContext, get_memory_context
 from app.services.rag import IngestionNotice, IngestionResult, RetrievalResult, get_rag_service
 
@@ -47,6 +48,10 @@ class ChatGraphState(TypedDict, total=False):
     attachments: list["ChatAttachmentState"]
     base_model_prompt: str
     model_prompt: str
+    system_addendum: str
+    history_messages: list["HistoryMessageState"]
+    dropped_history_count: int
+    dropped_history_message_ids: list[str]
     request_thread_id: str | None
     model_id: str | None
     provider_code: str | None
@@ -58,6 +63,10 @@ class ChatGraphState(TypedDict, total=False):
     selected_provider_code: str
     selected_model_id: str
     regenerate_from_message_id: str | None
+    continue_from_message_id: str | None
+    compare_with_user_message_id: str | None
+    parent_message_id: str | None
+    next_branch_index: int
     ingestion_notices: list["RagNoticeState"]
     pending_document_ids: list[str]
     retrieved_chunks: list["RetrievedChunkState"]
@@ -69,8 +78,12 @@ class ChatGraphState(TypedDict, total=False):
     error_status: int
 
 
-class ChatModelStreamState(TypedDict):
+class ChatModelStreamState(TypedDict, total=False):
     prompt: str
+    system_addendum: str
+    history_messages: list["HistoryMessageState"]
+    dropped_history_count: int
+    dropped_history_message_ids: list[str]
     retrieved_chunks: list["RetrievedChunkState"]
     user_id: str
     thread_id: str
@@ -79,11 +92,17 @@ class ChatModelStreamState(TypedDict):
     selected_provider_code: str
     selected_model_id: str
     thread_has_documents: bool
+    parent_message_id: str | None
+    next_branch_index: int
 
 
 @dataclass(frozen=True)
 class ChatGraphResult:
     prompt: str
+    system_addendum: str
+    history_messages: tuple["HistoryMessageState", ...]
+    dropped_history_count: int
+    dropped_history_message_ids: tuple[str, ...]
     retrieved_chunks: tuple["RetrievedChunkState", ...]
     user_id: str
     thread_id: str
@@ -93,6 +112,9 @@ class ChatGraphResult:
     model_id: str
     thread_has_documents: bool
     pending_document_ids: tuple[str, ...] = ()
+    parent_message_id: str | None = None
+    next_branch_index: int = 0
+    user_message_id: str | None = None
 
 
 class ChatAttachmentState(TypedDict):
@@ -113,6 +135,11 @@ class RetrievedChunkState(TypedDict):
     chunk_index: int
     score: float | None
     text: str
+
+
+class HistoryMessageState(TypedDict):
+    role: Literal["user", "assistant"]
+    content: str
 
 
 # ---------------------------------------------------------------------------
@@ -280,11 +307,15 @@ def _persist_assistant_message(
     model_name: str,
     provider_id: int,
     citations: list[RetrievedChunkState] | tuple[RetrievedChunkState, ...] | None = None,
+    parent_message_id: str | None = None,
+    branch_index: int = 0,
+    metrics: dict | None = None,
 ) -> str | None:
     thread = db.get(ChatThread, thread_id)
     if thread is None:
         return None
     message_id = str(_uuid.uuid4())
+    metrics = metrics or {}
     db.add(
         ChatMessage(
             id=message_id,
@@ -294,6 +325,13 @@ def _persist_assistant_message(
             citations=list(citations or []),
             model_name=model_name,
             provider_id=provider_id,
+            parent_message_id=parent_message_id,
+            branch_index=branch_index,
+            prompt_tokens=metrics.get("prompt_tokens"),
+            completion_tokens=metrics.get("completion_tokens"),
+            total_tokens=metrics.get("total_tokens"),
+            latency_ms=metrics.get("latency_ms"),
+            time_to_first_token_ms=metrics.get("time_to_first_token_ms"),
         )
     )
     thread.updated_at = utc_now()
@@ -390,11 +428,16 @@ def _deserialize_ingestion_result(notices: list[RagNoticeState]) -> IngestionRes
 # Memory helpers
 # ---------------------------------------------------------------------------
 
-def _inject_memory_context(
-    model_prompt: str,
+def _build_memory_addendum(
     thread_summary: str | None,
     user_facts: list[dict[str, str]],
 ) -> str:
+    """Build a system-prompt addendum carrying memory context.
+
+    Returns an empty string when there is nothing to add. The addendum is
+    appended to the system prompt, NOT the user message, so memory entries
+    cannot be misread as conversation content.
+    """
     parts: list[str] = []
     if thread_summary:
         parts.append(f"[Previous conversation summary]\n{thread_summary}")
@@ -406,10 +449,23 @@ def _inject_memory_context(
         ]
         if fact_lines:
             parts.append("[About the user]\n" + "\n".join(fact_lines))
-    if parts:
-        parts.append(model_prompt)
-        return "\n\n".join(parts)
-    return model_prompt
+    return "\n\n".join(parts)
+
+
+def _inject_memory_context(
+    model_prompt: str,
+    thread_summary: str | None,
+    user_facts: list[dict[str, str]],
+) -> str:
+    """Backward-compatible helper used by older callers/tests.
+
+    Prepends the memory addendum to the user prompt. New code should prefer
+    `_build_memory_addendum` and place the result in the system prompt instead.
+    """
+    addendum = _build_memory_addendum(thread_summary, user_facts)
+    if not addendum:
+        return model_prompt
+    return f"{addendum}\n\n{model_prompt}"
 
 
 # ---------------------------------------------------------------------------
@@ -420,8 +476,9 @@ def _validate_request(state: ChatGraphState) -> dict[str, str | None | int]:
     prompt = (state.get("prompt") or "").strip()
     attachments = state.get("attachments") or []
     is_regenerate = bool(state.get("regenerate_from_message_id"))
+    is_compare = bool(state.get("compare_with_user_message_id"))
     base_model_prompt = _build_model_prompt(prompt, attachments)
-    if not base_model_prompt and not is_regenerate:
+    if not base_model_prompt and not is_regenerate and not is_compare:
         return _error_state(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
             "Message text or at least one attachment is required.",
@@ -562,23 +619,80 @@ def _persist_user_message(
 
     thread.provider_api_key_id = state["provider_api_key_id"]
 
+    # Compare mode: target an existing user message and create a sibling
+    # assistant branch under it. The user message itself is not duplicated.
+    compare_with = state.get("compare_with_user_message_id")
+    if compare_with:
+        target_user = db.get(ChatMessage, compare_with)
+        if target_user is None or target_user.role != MessageRole.USER:
+            return _error_state(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "Cannot compare: target user message not found.",
+            )
+        max_branch = db.scalar(
+            select(func.max(ChatMessage.branch_index)).where(
+                ChatMessage.thread_id == state["thread_id"],
+                ChatMessage.parent_message_id == target_user.id,
+                ChatMessage.role == MessageRole.ASSISTANT,
+            )
+        )
+        next_branch = (max_branch + 1) if max_branch is not None else 0
+        thread.updated_at = utc_now()
+        db.commit()
+        return {
+            "prompt": target_user.content,
+            "base_model_prompt": _build_model_prompt(
+                target_user.content,
+                target_user.attachments or [],
+            ),
+            "model_prompt": _build_model_prompt(
+                target_user.content,
+                target_user.attachments or [],
+            ),
+            "user_message_id": target_user.id,
+            "parent_message_id": target_user.id,
+            "next_branch_index": next_branch,
+            "error_message": "",
+            "error_status": 0,
+        }
+
     # When regenerating, reuse the existing last user message instead of
     # creating a duplicate row.
     if state.get("regenerate_from_message_id"):
-        last_user_message = db.scalar(
-            select(ChatMessage)
-            .where(
-                ChatMessage.thread_id == state["thread_id"],
-                ChatMessage.role == MessageRole.USER,
+        # Look up the specific assistant message being regenerated to find
+        # its parent user message, rather than blindly using the last user
+        # message in the thread.
+        regen_assistant = db.get(ChatMessage, state["regenerate_from_message_id"])
+        if regen_assistant is not None and regen_assistant.parent_message_id:
+            last_user_message = db.get(ChatMessage, regen_assistant.parent_message_id)
+        else:
+            # Fallback for legacy messages without parent_message_id:
+            # find the closest preceding user message.
+            last_user_message = db.scalar(
+                select(ChatMessage)
+                .where(
+                    ChatMessage.thread_id == state["thread_id"],
+                    ChatMessage.role == MessageRole.USER,
+                )
+                .order_by(ChatMessage.created_at.desc())
+                .limit(1)
             )
-            .order_by(ChatMessage.created_at.desc())
-            .limit(1)
-        )
         if last_user_message is None:
             return _error_state(
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
                 "Cannot regenerate: no prior user message found in this thread.",
             )
+
+        # Determine next branch_index for the new sibling assistant message.
+        max_branch = db.scalar(
+            select(func.max(ChatMessage.branch_index)).where(
+                ChatMessage.thread_id == state["thread_id"],
+                ChatMessage.parent_message_id == last_user_message.id,
+                ChatMessage.role == MessageRole.ASSISTANT,
+            )
+        )
+        next_branch = (max_branch + 1) if max_branch is not None else 0
+
         thread.updated_at = utc_now()
         db.commit()
         # Use the existing message's content as the prompt for the model.
@@ -593,12 +707,18 @@ def _persist_user_message(
                 state.get("attachments") or [],
             ),
             "user_message_id": last_user_message.id,
+            "parent_message_id": last_user_message.id,
+            "next_branch_index": next_branch,
             "error_message": "",
             "error_status": 0,
         }
 
     if not thread.title:
         thread.title = _build_thread_title(state["prompt"], state.get("attachments") or [])
+
+    # Link user message to the assistant message it continues from, enabling
+    # tree-structured conversation branching.
+    continue_from = state.get("continue_from_message_id") or None
 
     message = ChatMessage(
         thread_id=thread.id,
@@ -607,6 +727,7 @@ def _persist_user_message(
         attachments=state.get("attachments") or [],
         model_name=state["selected_model_id"],
         provider_id=state["provider_id"],
+        parent_message_id=continue_from,
     )
     db.add(message)
     thread.updated_at = utc_now()
@@ -614,6 +735,8 @@ def _persist_user_message(
     db.refresh(message)
     return {
         "user_message_id": message.id,
+        "parent_message_id": message.id,
+        "next_branch_index": 0,
         "error_message": "",
         "error_status": 0,
     }
@@ -633,16 +756,21 @@ async def _ingest_attachments(
         }
 
     rag_service = _get_rag_service(config)
-    document_ids, result = await rag_service.create_pending_records(
+    # Ingest synchronously so documents are INDEXED before _retrieve_context
+    # decides whether to bind the search_documents tool. Background indexing
+    # races with the LLM stream and leaves the file unreachable on the same
+    # turn it was uploaded.
+    result = await rag_service.ingest_attachments(
         db=_get_db(config),
         user_id=state["user_id"],
         thread_id=state["thread_id"],
         message_id=state["user_message_id"],
         attachments=attachments,
+        preferred_provider_api_key_id=state.get("provider_api_key_id"),
     )
     return {
         "ingestion_notices": _serialize_ingestion_notices(result.notices),
-        "pending_document_ids": document_ids,
+        "pending_document_ids": [],
         "error_message": "",
         "error_status": 0,
     }
@@ -664,24 +792,58 @@ async def _retrieve_context(
     ) or 0
     thread_has_documents = bool(indexed_count)
 
-    ingestion_result = _deserialize_ingestion_result(state.get("ingestion_notices") or [])
-    rag_prompt = rag_service.build_augmented_prompt(
-        base_prompt=state["base_model_prompt"],
-        ingestion_result=ingestion_result,
-        retrieval_result=RetrievalResult(thread_has_documents=thread_has_documents),
-    )
-    model_prompt = _inject_memory_context(
-        rag_prompt,
+    # Memory context (summary + user facts) is placed in the system addendum
+    # rather than prepended to the user prompt — keeps memory out of the
+    # conversation surface so the LLM cannot mistake it for chat content.
+    memory_addendum = _build_memory_addendum(
         state.get("thread_summary"),
         state.get("user_memory_facts") or [],
     )
+    ingestion_result = _deserialize_ingestion_result(state.get("ingestion_notices") or [])
+    ingestion_addendum = ""
+    if ingestion_result.notices:
+        lines = ["[Document indexing notices]"]
+        for notice in ingestion_result.notices:
+            label = notice.filename or "Attachment"
+            lines.append(f"- {label}: {notice.message}")
+        ingestion_addendum = "\n".join(lines)
+
+    addendum_parts = [part for part in (memory_addendum, ingestion_addendum) if part]
+    system_addendum = "\n\n".join(addendum_parts)
+
     return {
         "retrieved_chunks": [],
         "retrieval_notice": None,
         "thread_has_documents": thread_has_documents,
-        "model_prompt": model_prompt,
+        "model_prompt": state["base_model_prompt"],
+        "system_addendum": system_addendum,
         "error_message": "",
         "error_status": 0,
+    }
+
+
+def _load_history(
+    state: ChatGraphState,
+    config: RunnableConfig,
+) -> dict[str, object]:
+    """Walk the branch lineage from the just-persisted user message and select
+    a token-budgeted window of prior turns for the LLM."""
+    db = _get_db(config)
+    leaf_id = state.get("user_message_id")
+    if not leaf_id:
+        return {
+            "history_messages": [],
+            "dropped_history_count": 0,
+            "dropped_history_message_ids": [],
+        }
+
+    window = select_history_window(db, leaf_message_id=leaf_id)
+    return {
+        "history_messages": [
+            {"role": m.role, "content": m.content} for m in window.messages
+        ],
+        "dropped_history_count": window.dropped_count,
+        "dropped_history_message_ids": list(window.dropped_message_ids),
     }
 
 

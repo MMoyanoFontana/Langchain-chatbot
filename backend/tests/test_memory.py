@@ -38,6 +38,7 @@ from app.models import (
 from app.services.memory import (
     SUMMARY_THRESHOLD,
     MemoryContext,
+    _looks_declarative,
     get_memory_context,
     update_memory,
 )
@@ -162,6 +163,61 @@ class TestGetMemoryContext:
 
 
 # ---------------------------------------------------------------------------
+# _looks_declarative — gate before LLM extraction
+# ---------------------------------------------------------------------------
+
+class TestLooksDeclarative:
+    """Cheap regex gate that decides whether to spend an LLM call extracting facts.
+
+    Should match biographical statements (English + Spanish) and reject
+    chitchat, format requests, and one-off commands."""
+
+    def test_empty_or_none_is_not_declarative(self):
+        assert _looks_declarative(None) is False
+        assert _looks_declarative("") is False
+        assert _looks_declarative("   ") is False
+
+    def test_format_request_is_not_declarative(self):
+        # The motivating bug: a single "format as a markdown table" request
+        # used to land `preferred_format=table` in the user fact store.
+        assert _looks_declarative("Please format the answer as a markdown table") is False
+        assert _looks_declarative("Respond with bullet points") is False
+        assert _looks_declarative("Use code blocks") is False
+
+    def test_chitchat_is_not_declarative(self):
+        assert _looks_declarative("Hello") is False
+        assert _looks_declarative("Thanks!") is False
+        assert _looks_declarative("What is the capital of France?") is False
+
+    def test_english_identity_statements_match(self):
+        assert _looks_declarative("I'm a data scientist") is True
+        assert _looks_declarative("I am Max") is True
+        assert _looks_declarative("My name is Maximiliano") is True
+        assert _looks_declarative("Call me Max") is True
+
+    def test_english_role_statements_match(self):
+        assert _looks_declarative("I work at Anthropic") is True
+        assert _looks_declarative("I live in Buenos Aires") is True
+        assert _looks_declarative("I study machine learning") is True
+        assert _looks_declarative("I have 10 years of experience in Python") is True
+
+    def test_spanish_identity_statements_match(self):
+        assert _looks_declarative("Soy ingeniero de software") is True
+        assert _looks_declarative("Me llamo Max") is True
+        assert _looks_declarative("Mi nombre es Maximiliano") is True
+
+    def test_spanish_role_statements_match(self):
+        assert _looks_declarative("Trabajo en una startup") is True
+        assert _looks_declarative("Vivo en Argentina") is True
+        assert _looks_declarative("Hablo español e inglés") is True
+        assert _looks_declarative("Tengo 10 años de experiencia") is True
+
+    def test_case_insensitive(self):
+        assert _looks_declarative("SOY DESARROLLADOR") is True
+        assert _looks_declarative("i AM a teacher") is True
+
+
+# ---------------------------------------------------------------------------
 # update_memory — fact extraction
 # ---------------------------------------------------------------------------
 
@@ -189,7 +245,8 @@ class TestUpdateMemoryFactExtraction:
             db.add(UserMemory(user_id=user.id, key="language", value="Java"))
             db.commit()
 
-            _add_message(db, thread.id, MessageRole.USER, "I prefer Python now.")
+            # Message must be declarative for the gated extractor to run.
+            _add_message(db, thread.id, MessageRole.USER, "I work mostly in Python now.")
             _add_message(db, thread.id, MessageRole.ASSISTANT, "Python is great!")
 
             llm = FakeLLM(responses=['{"facts": [{"key": "language", "value": "Python"}]}'])
@@ -217,69 +274,123 @@ class TestUpdateMemoryFactExtraction:
         with SessionLocal() as db:
             user = _make_user(db)
             thread = _make_thread(db, user.id)
-            _add_message(db, thread.id, MessageRole.USER, "Hello.")
+            # Declarative so the extractor actually runs and consumes the response.
+            _add_message(db, thread.id, MessageRole.USER, "I am a developer.")
             _add_message(db, thread.id, MessageRole.ASSISTANT, "Hi!")
 
             llm = FakeLLM(responses=["this is not json"])
             # Should not raise
             asyncio.run(update_memory(db, thread.id, user.id, llm))
 
+    def test_skips_extractor_for_non_declarative_message(self):
+        """The declarative gate must short-circuit before any LLM call.
+
+        Motivated by the format-request bug: "format as a markdown table" used
+        to invoke the extractor and land `preferred_format=table` in the store.
+        """
+        SessionLocal = _session_factory()
+        with SessionLocal() as db:
+            user = _make_user(db)
+            thread = _make_thread(db, user.id)
+            _add_message(db, thread.id, MessageRole.USER, "Format that as a markdown table")
+            _add_message(db, thread.id, MessageRole.ASSISTANT, "Sure!")
+
+            llm = FakeLLM(responses=['{"facts": [{"key": "preferred_format", "value": "table"}]}'])
+            asyncio.run(update_memory(db, thread.id, user.id, llm))
+
+            facts = list(db.scalars(select(UserMemory).where(UserMemory.user_id == user.id)))
+
+        assert facts == []
+        assert llm.calls == [], "Extractor should never have been invoked"
+
 
 # ---------------------------------------------------------------------------
 # update_memory — summary generation
 # ---------------------------------------------------------------------------
 
-class TestUpdateMemorySummary:
-    def _fill_thread(self, db: Session, thread_id: str, n_pairs: int) -> None:
-        for i in range(n_pairs):
-            _add_message(db, thread_id, MessageRole.USER, f"User message {i}")
-            _add_message(db, thread_id, MessageRole.ASSISTANT, f"Assistant reply {i}")
+class TestUpdateMemoryRollingSummary:
+    """Rolling summary fires based on `dropped_history_message_ids`, not a fixed count."""
 
-    def test_generates_summary_at_threshold(self):
+    def _fill_thread(self, db: Session, thread_id: str, n_pairs: int) -> list[ChatMessage]:
+        msgs: list[ChatMessage] = []
+        for i in range(n_pairs):
+            msgs.append(_add_message(db, thread_id, MessageRole.USER, f"User message {i}"))
+            msgs.append(_add_message(db, thread_id, MessageRole.ASSISTANT, f"Assistant reply {i}"))
+        return msgs
+
+    def test_generates_summary_when_drop_trigger_reached(self):
+        from app.services.memory import ROLLING_SUMMARY_DROP_TRIGGER
+
         SessionLocal = _session_factory()
         with SessionLocal() as db:
             user = _make_user(db)
             thread = _make_thread(db, user.id)
-            self._fill_thread(db, thread.id, SUMMARY_THRESHOLD // 2)  # exactly SUMMARY_THRESHOLD messages
+            msgs = self._fill_thread(db, thread.id, ROLLING_SUMMARY_DROP_TRIGGER)
+            dropped_ids = [m.id for m in msgs]
 
-            fact_resp = '{"facts": []}'
-            summary_resp = "This is a test summary."
-            # fact extraction is called once, then summary generation
-            llm = FakeLLM(responses=[fact_resp, summary_resp])
-            asyncio.run(update_memory(db, thread.id, user.id, llm))
+            # Last user message is non-declarative, so fact extraction is skipped.
+            # Only the summary call should land.
+            llm = FakeLLM(responses=["This is a test summary."])
+            asyncio.run(
+                update_memory(
+                    db,
+                    thread.id,
+                    user.id,
+                    llm,
+                    dropped_history_message_ids=dropped_ids,
+                )
+            )
 
             db.refresh(thread)
         assert thread.summary == "This is a test summary."
-        assert thread.summary_message_count == SUMMARY_THRESHOLD
+        assert thread.summary_message_count == len(dropped_ids)
+        # Only one LLM call: the summary regeneration. Fact extractor was gated out.
+        assert len(llm.calls) == 1
 
-    def test_no_summary_below_threshold(self):
+    def test_no_summary_when_no_dropped_messages(self):
         SessionLocal = _session_factory()
         with SessionLocal() as db:
             user = _make_user(db)
             thread = _make_thread(db, user.id)
-            # One pair = 2 messages, well below threshold
             _add_message(db, thread.id, MessageRole.USER, "Hello")
             _add_message(db, thread.id, MessageRole.ASSISTANT, "Hi")
 
-            llm = FakeLLM(responses=['{"facts": []}'])
-            asyncio.run(update_memory(db, thread.id, user.id, llm))
+            llm = FakeLLM(responses=[])
+            asyncio.run(
+                update_memory(
+                    db,
+                    thread.id,
+                    user.id,
+                    llm,
+                    dropped_history_message_ids=[],
+                )
+            )
 
             db.refresh(thread)
         assert thread.summary is None
-        # Only one call (fact extraction), no summary call
-        assert len(llm.calls) == 1
+        # No LLM calls: "Hello" is non-declarative AND nothing dropped.
+        assert len(llm.calls) == 0
 
-    def test_no_summary_at_non_threshold_count(self):
+    def test_no_summary_below_drop_trigger(self):
+        from app.services.memory import ROLLING_SUMMARY_DROP_TRIGGER
+
         SessionLocal = _session_factory()
         with SessionLocal() as db:
             user = _make_user(db)
             thread = _make_thread(db, user.id)
-            # SUMMARY_THRESHOLD + 2 messages (not a multiple of threshold)
-            self._fill_thread(db, thread.id, SUMMARY_THRESHOLD // 2)
-            _add_message(db, thread.id, MessageRole.USER, "Extra message")
+            msgs = self._fill_thread(db, thread.id, ROLLING_SUMMARY_DROP_TRIGGER - 1)
+            dropped_ids = [m.id for m in msgs[: ROLLING_SUMMARY_DROP_TRIGGER - 1]]
 
-            llm = FakeLLM(responses=['{"facts": []}'])
-            asyncio.run(update_memory(db, thread.id, user.id, llm))
+            llm = FakeLLM(responses=[])
+            asyncio.run(
+                update_memory(
+                    db,
+                    thread.id,
+                    user.id,
+                    llm,
+                    dropped_history_message_ids=dropped_ids,
+                )
+            )
 
             db.refresh(thread)
         assert thread.summary is None

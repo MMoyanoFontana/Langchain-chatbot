@@ -297,9 +297,18 @@ class ChatMessage(Base):
         index=True,
     )
     model_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    parent_message_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("chat_messages.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     branch_index: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     prompt_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     completion_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    total_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    time_to_first_token_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     thread: Mapped["ChatThread"] = relationship(back_populates="messages")

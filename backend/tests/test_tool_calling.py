@@ -202,7 +202,15 @@ class TestFormatToolRetrievalResult:
 class TestRetrieveContextDocCheck:
     """Tests that _retrieve_context sets thread_has_documents based on DB state."""
 
-    def _run_retrieve_context(self, db: Session, user_id: str, thread_id: str) -> dict:
+    def _run_retrieve_context(
+        self,
+        db: Session,
+        user_id: str,
+        thread_id: str,
+        *,
+        thread_summary: str | None = None,
+        user_memory_facts: list | None = None,
+    ) -> dict:
         from app.graphs._nodes import _retrieve_context
         from unittest.mock import MagicMock
 
@@ -214,8 +222,8 @@ class TestRetrieveContextDocCheck:
             "thread_id": thread_id,
             "base_model_prompt": "hello",
             "ingestion_notices": [],
-            "thread_summary": None,
-            "user_memory_facts": [],
+            "thread_summary": thread_summary,
+            "user_memory_facts": user_memory_facts or [],
         }
         config = {"configurable": {"db": db, "rag_service": fake_rag}}
         return asyncio.run(_retrieve_context(state, config))
@@ -263,6 +271,50 @@ class TestRetrieveContextDocCheck:
             thread = _make_thread(db, user.id)
             result = self._run_retrieve_context(db, user.id, thread.id)
         assert result["retrieved_chunks"] == []
+
+    def test_model_prompt_is_clean_base_prompt(self):
+        """model_prompt must NOT carry memory context — that goes to system_addendum."""
+        SessionLocal = _session_factory()
+        with SessionLocal() as db:
+            user = _make_user(db)
+            thread = _make_thread(db, user.id)
+            result = self._run_retrieve_context(
+                db,
+                user.id,
+                thread.id,
+                thread_summary="Prior summary text.",
+                user_memory_facts=[{"key": "name", "value": "Max"}],
+            )
+        assert result["model_prompt"] == "hello"
+        assert "Prior summary text." not in result["model_prompt"]
+        assert "Max" not in result["model_prompt"]
+
+    def test_system_addendum_carries_memory_context(self):
+        """Summary + facts must land in system_addendum, not the user prompt."""
+        SessionLocal = _session_factory()
+        with SessionLocal() as db:
+            user = _make_user(db)
+            thread = _make_thread(db, user.id)
+            result = self._run_retrieve_context(
+                db,
+                user.id,
+                thread.id,
+                thread_summary="Previously discussed colors.",
+                user_memory_facts=[{"key": "name", "value": "Max"}],
+            )
+        addendum = result["system_addendum"]
+        assert "[Previous conversation summary]" in addendum
+        assert "Previously discussed colors." in addendum
+        assert "[About the user]" in addendum
+        assert "- name: Max" in addendum
+
+    def test_system_addendum_empty_when_no_memory(self):
+        SessionLocal = _session_factory()
+        with SessionLocal() as db:
+            user = _make_user(db)
+            thread = _make_thread(db, user.id)
+            result = self._run_retrieve_context(db, user.id, thread.id)
+        assert result["system_addendum"] == ""
 
 
 # ---------------------------------------------------------------------------
@@ -318,7 +370,9 @@ class TestStreamModelToolPath:
             _stream_module._resolve_provider_api_key_value = original_resolve
             _stream_module.get_stream_writer = original_get_writer
 
-        return written
+        # Filter out control sentinels (\x00CITATIONS:, \x00MESSAGE_ID:) so
+        # tests only see streamed text content.
+        return [w for w in written if not w.startswith("\x00")]
 
     def test_no_tool_call_streams_text_in_first_pass(self):
         """When model responds with text (no tool call), text is streamed immediately
@@ -403,6 +457,61 @@ class TestStreamModelToolPath:
         assert len(saved_msg.citations) == 1
         assert saved_msg.citations[0]["document_id"] == "doc1"
         assert saved_msg.citations[0]["filename"] == "report.pdf"
+
+    def test_history_messages_passed_to_llm(self):
+        """history_messages from state must be sent to the LLM as Human/AI messages
+        between the system prompt and the current user prompt."""
+        from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+
+        SessionLocal = _session_factory()
+        with SessionLocal() as db:
+            user = _make_user(db)
+            thread = _make_thread(db, user.id)
+            llm = FakeStreamingLLM(text="ok")
+            state = _make_stream_state(db, user, thread, thread_has_documents=False)
+            state["history_messages"] = [
+                {"role": "user", "content": "First question"},
+                {"role": "assistant", "content": "First answer"},
+                {"role": "user", "content": "Second question"},
+                {"role": "assistant", "content": "Second answer"},
+            ]
+            self._run(db, state, llm)
+
+        sent = llm.stream_calls[0]
+        # Expect: System, User1, Assistant1, User2, Assistant2, current prompt
+        assert isinstance(sent[0], SystemMessage)
+        roles_after_system = [type(m).__name__ for m in sent[1:]]
+        assert roles_after_system == [
+            "HumanMessage",
+            "AIMessage",
+            "HumanMessage",
+            "AIMessage",
+            "HumanMessage",
+        ]
+        assert sent[1].content == "First question"
+        assert sent[2].content == "First answer"
+        assert sent[5].content == state["prompt"]
+
+    def test_system_addendum_appended_to_system_prompt(self):
+        """system_addendum must be appended to the system prompt — not the user message."""
+        from langchain_core.messages import SystemMessage
+
+        SessionLocal = _session_factory()
+        with SessionLocal() as db:
+            user = _make_user(db)
+            thread = _make_thread(db, user.id)
+            llm = FakeStreamingLLM(text="ok")
+            state = _make_stream_state(db, user, thread, thread_has_documents=False)
+            state["system_addendum"] = "[About the user]\n- name: Max"
+            self._run(db, state, llm)
+
+        sent = llm.stream_calls[0]
+        system_msg = sent[0]
+        assert isinstance(system_msg, SystemMessage)
+        assert "[About the user]" in system_msg.content
+        assert "- name: Max" in system_msg.content
+        # The user prompt itself must remain pristine.
+        assert "Max" not in sent[-1].content
 
     def test_no_tool_call_saves_empty_citations(self):
         """When no tool call, citations are empty."""

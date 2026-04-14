@@ -2,8 +2,9 @@
 
 Two responsibilities:
 - get_memory_context: load thread summary + user facts for prompt injection
-- update_memory: called after each assistant response to extract user facts and
-  (at threshold intervals) regenerate the thread summary
+- update_memory: called after each assistant response to (a) extract user facts when
+  the latest user message looks declarative and (b) regenerate the thread summary
+  when enough messages have rolled out of the LLM history window
 """
 
 from __future__ import annotations
@@ -18,9 +19,13 @@ from sqlalchemy.orm import Session
 
 from app.models import ChatMessage, ChatThread, MessageRole, UserMemory, utc_now
 
-# Summarize when the thread reaches this many total messages (user + assistant).
-# At 20 messages that's 10 exchanges — enough context to warrant a summary.
+# Legacy threshold kept for tests that import it. The current path uses a rolling
+# summary triggered by ROLLING_SUMMARY_DROP_TRIGGER instead.
 SUMMARY_THRESHOLD = 20
+
+# Regenerate the rolling thread summary when at least this many new messages have
+# fallen out of the LLM history window since the last summary update.
+ROLLING_SUMMARY_DROP_TRIGGER = 5
 
 # How many recent messages to scan when extracting user facts.
 _FACT_EXTRACTION_WINDOW = 4
@@ -34,6 +39,33 @@ _SENSITIVE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _MAX_FACT_VALUE_LEN = 200
+
+# Heuristic patterns that gate the LLM-based fact extractor. If the latest user
+# message does not match any of these (Spanish + English biographical statements),
+# we skip the extraction call entirely. Cheaper and avoids extracting noise like
+# "preferred_format=table" from one-off formatting requests.
+_DECLARATIVE_PATTERNS = re.compile(
+    r"""
+    \b(
+        # English: identity / role / background
+        i\s*am\b | i'?m\b | my\s+name\b | call\s+me\b |
+        i\s+work\b | i\s+live\b | i\s+study\b | i\s+speak\b |
+        i\s+have\s+\d+\s+years? | my\s+(role|job|profession|company|team|stack|language|background|expertise|degree)\b |
+        # Spanish: identity / role / background
+        soy\b | me\s+llamo | me\s+dedico | mi\s+nombre |
+        trabajo\s+(en|de|como)\b | vivo\s+en\b | estudio\b | hablo\b |
+        tengo\s+\d+\s+a[nñ]os | mi\s+(rol|trabajo|profesi[oó]n|empresa|equipo|stack|lenguaje|idioma|background|expertise|t[ií]tulo)\b
+    )
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
+def _looks_declarative(text: str | None) -> bool:
+    """Cheap gate before invoking the LLM extractor."""
+    if not text:
+        return False
+    return bool(_DECLARATIVE_PATTERNS.search(text))
 
 
 @dataclass
@@ -65,11 +97,20 @@ async def update_memory(
     thread_id: str,
     user_id: str,
     llm,
+    dropped_history_message_ids: list[str] | None = None,
 ) -> None:
-    """Extract user facts from the latest exchange and, at threshold, regenerate summary.
+    """Run the post-response memory updates.
 
-    Both operations are best-effort: any LLM or DB error is swallowed so that a
-    memory update failure can never break the chat response.
+    Two operations, both best-effort (any LLM or DB error is swallowed so a
+    memory update failure can never break the chat response):
+
+    1. **Fact extraction**: only when the latest user message looks declarative
+       (gated by `_looks_declarative`). Avoids extracting noise from one-off
+       formatting requests like "format as a markdown table".
+    2. **Rolling summary**: when `dropped_history_message_ids` indicates that at
+       least `ROLLING_SUMMARY_DROP_TRIGGER` new messages have fallen out of the
+       LLM history window since the last summary update, regenerate the summary
+       to cover everything that no longer fits in the live window.
     """
     thread = db.get(ChatThread, thread_id)
     if thread is None:
@@ -95,15 +136,14 @@ async def update_memory(
 
     await _extract_and_save_user_facts(db, user_id, recent_messages, llm)
 
-    if total_count >= SUMMARY_THRESHOLD and total_count % SUMMARY_THRESHOLD == 0:
-        all_messages = list(
-            db.scalars(
-                select(ChatMessage)
-                .where(ChatMessage.thread_id == thread_id)
-                .order_by(ChatMessage.created_at)
-            )
+    dropped_ids = dropped_history_message_ids or []
+    if len(dropped_ids) - already_summarized >= ROLLING_SUMMARY_DROP_TRIGGER:
+        await _regenerate_rolling_summary(
+            db,
+            thread_id=thread_id,
+            dropped_message_ids=dropped_ids,
+            llm=llm,
         )
-        await _generate_and_save_summary(db, thread_id, all_messages, llm)
 
 
 # ---------------------------------------------------------------------------
@@ -116,25 +156,36 @@ async def _extract_and_save_user_facts(
     messages: list[ChatMessage],
     llm,
 ) -> None:
-    """Extract facts about the user from the most recent user message and upsert them."""
+    """Extract stable biographical facts from the latest user message and upsert them.
+
+    Skipped entirely when the latest user message does not look declarative —
+    avoids spending an LLM call (and storing noise) for one-off requests like
+    "format as a markdown table".
+    """
     recent = messages[-_FACT_EXTRACTION_WINDOW:]
 
-    # Find the last user message in the window.
     last_user_msg: str | None = None
     for msg in recent:
         if msg.role == MessageRole.USER:
             last_user_msg = msg.content
 
-    if last_user_msg is None:
+    if last_user_msg is None or not _looks_declarative(last_user_msg):
         return
 
     prompt = (
-        "Extract facts about the user from this message. "
-        "Only include clearly stated facts (name, job, skills, preferences, goals, etc.). "
+        "Extract ONLY stable biographical or long-term facts about the user "
+        "from this message. Allowed categories: name, profession/role, "
+        "location, languages spoken, technical expertise, long-term goals.\n\n"
+        "DO NOT extract:\n"
+        "- Format preferences (markdown, tables, bullet points, code style)\n"
+        "- One-off requests or commands (\"respond like X\", \"use Y format\")\n"
+        "- Tone/style preferences for a single conversation\n"
+        "- Topics of interest for a single conversation\n"
+        "- Anything that is not a permanent personal attribute\n\n"
         "Return JSON only — no prose, no markdown fences.\n"
         'Format: {"facts": [{"key": "snake_case_key", "value": "fact value"}]}\n'
-        'If nothing to extract, return: {"facts": []}\n\n'
-        f"User: {last_user_msg[:600]}"
+        'If nothing qualifies, return: {"facts": []}\n\n'
+        f"User message: {last_user_msg[:600]}"
     )
 
     try:
@@ -156,22 +207,43 @@ async def _extract_and_save_user_facts(
         db.rollback()
 
 
-async def _generate_and_save_summary(
+async def _regenerate_rolling_summary(
     db: Session,
+    *,
     thread_id: str,
-    messages: list[ChatMessage],
+    dropped_message_ids: list[str],
     llm,
 ) -> None:
-    """Summarize the full thread and save to ChatThread.summary."""
+    """Build a rolling summary covering the messages that no longer fit in the LLM window.
+
+    The summary is regenerated from scratch each time it fires (cheap and avoids
+    drift) and is bounded by the dropped message set, so it never duplicates the
+    content the LLM still sees in the live history window.
+    """
+    if not dropped_message_ids:
+        return
+
+    # Load the actual ChatMessage rows for the dropped IDs, in chronological order.
+    dropped = list(
+        db.scalars(
+            select(ChatMessage)
+            .where(ChatMessage.id.in_(dropped_message_ids))
+            .order_by(ChatMessage.created_at)
+        )
+    )
+    if not dropped:
+        return
+
     lines: list[str] = []
-    for msg in messages:
+    for msg in dropped:
         role = "User" if msg.role == MessageRole.USER else "Assistant"
-        lines.append(f"{role}: {msg.content[:500]}")
+        lines.append(f"{role}: {(msg.content or '')[:500]}")
     conversation = "\n".join(lines)
 
     prompt = (
-        "Summarize this conversation concisely (3-6 sentences). "
-        "Focus on key topics, decisions, and context needed to continue the conversation.\n\n"
+        "Summarize the following conversation excerpt concisely (3-6 sentences). "
+        "Focus on key facts, decisions, names, and context the assistant needs to "
+        "continue the conversation coherently. Do not invent details.\n\n"
         f"{conversation}\n\n"
         "Summary:"
     )
@@ -183,7 +255,7 @@ async def _generate_and_save_summary(
             thread = db.get(ChatThread, thread_id)
             if thread:
                 thread.summary = summary
-                thread.summary_message_count = len(messages)
+                thread.summary_message_count = len(dropped_message_ids)
                 thread.updated_at = utc_now()
                 db.commit()
     except Exception:

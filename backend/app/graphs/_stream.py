@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 
 from fastapi import HTTPException, status
-from langchain_core.messages import AIMessageChunk, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
@@ -53,12 +54,19 @@ def _build_chat_client(
     api_key: str,
 ):
     if provider_code == ProviderCode.OPENAI:
-        return ChatOpenAI(model=model_name, streaming=True, temperature=0.2, api_key=api_key)
+        return ChatOpenAI(
+            model=model_name,
+            streaming=True,
+            stream_usage=True,
+            temperature=0.2,
+            api_key=api_key,
+        )
 
     if provider_code == ProviderCode.GROQ:
         return ChatOpenAI(
             model=model_name,
             streaming=True,
+            stream_usage=True,
             temperature=0.2,
             base_url="https://api.groq.com/openai/v1",
             api_key=api_key,
@@ -155,6 +163,39 @@ async def _execute_tool_call(
 # Streaming node
 # ---------------------------------------------------------------------------
 
+def _extract_usage(chunk: AIMessageChunk | None) -> dict[str, int] | None:
+    if chunk is None:
+        return None
+    usage = getattr(chunk, "usage_metadata", None)
+    if not usage:
+        return None
+    try:
+        return {
+            "input_tokens": int(usage.get("input_tokens") or 0),
+            "output_tokens": int(usage.get("output_tokens") or 0),
+            "total_tokens": int(
+                usage.get("total_tokens")
+                or (usage.get("input_tokens") or 0) + (usage.get("output_tokens") or 0)
+            ),
+        }
+    except (TypeError, ValueError):
+        return None
+
+
+def _merge_usage(
+    a: dict[str, int] | None, b: dict[str, int] | None
+) -> dict[str, int] | None:
+    if a is None:
+        return b
+    if b is None:
+        return a
+    return {
+        "input_tokens": a.get("input_tokens", 0) + b.get("input_tokens", 0),
+        "output_tokens": a.get("output_tokens", 0) + b.get("output_tokens", 0),
+        "total_tokens": a.get("total_tokens", 0) + b.get("total_tokens", 0),
+    }
+
+
 async def _stream_model_and_persist(
     state: ChatModelStreamState,
     config: RunnableConfig,
@@ -163,6 +204,9 @@ async def _stream_model_and_persist(
     writer = get_stream_writer()
     collected_parts: list[str] = []
     retrieved_chunks: list[RetrievedChunkState] = []
+    started_at = time.perf_counter()
+    first_token_at: float | None = None
+    usage_total: dict[str, int] | None = None
     try:
         provider_code = ProviderCode(state["selected_provider_code"])
         api_key = _resolve_provider_api_key_value(
@@ -178,10 +222,21 @@ async def _stream_model_and_persist(
             api_key=api_key,
         )
 
-        messages = [
-            SystemMessage(content=ASSISTANT_SYSTEM_PROMPT),
-            HumanMessage(content=state["prompt"]),
-        ]
+        system_addendum = state.get("system_addendum") or ""
+        system_content = (
+            f"{ASSISTANT_SYSTEM_PROMPT}\n\n{system_addendum}"
+            if system_addendum
+            else ASSISTANT_SYSTEM_PROMPT
+        )
+        messages: list = [SystemMessage(content=system_content)]
+        for history_msg in state.get("history_messages") or []:
+            role = history_msg.get("role")
+            content = history_msg.get("content") or ""
+            if role == "user":
+                messages.append(HumanMessage(content=content))
+            elif role == "assistant":
+                messages.append(AIMessage(content=content))
+        messages.append(HumanMessage(content=state["prompt"]))
 
         # Offer search_documents when the thread has indexed documents.
         # Stream first response — text arrives immediately if no tool is called;
@@ -198,6 +253,8 @@ async def _stream_model_and_persist(
             async for chunk in llm_with_tools.astream(messages):
                 chunk_text = _extract_chunk_text(chunk.content)
                 if chunk_text:
+                    if first_token_at is None:
+                        first_token_at = time.perf_counter()
                     collected_parts.append(chunk_text)
                     writer(chunk_text)
                 accumulated = chunk if accumulated is None else accumulated + chunk  # type: ignore[operator]
@@ -212,8 +269,12 @@ async def _stream_model_and_persist(
             async for chunk in llm.astream(messages):
                 chunk_text = _extract_chunk_text(chunk.content)
                 if chunk_text:
+                    if first_token_at is None:
+                        first_token_at = time.perf_counter()
                     collected_parts.append(chunk_text)
                     writer(chunk_text)
+                accumulated = chunk if accumulated is None else accumulated + chunk  # type: ignore[operator]
+        usage_total = _merge_usage(usage_total, _extract_usage(accumulated))
 
         # If the model decided to call a tool, execute it and stream the final answer.
         if tools_supported and accumulated is not None and accumulated.tool_calls:
@@ -233,11 +294,18 @@ async def _stream_model_and_persist(
                 tool_call_id=tool_call["id"],
             )
             collected_parts = []
+            tool_accumulated: AIMessageChunk | None = None
             async for chunk in llm.astream(messages + [accumulated, tool_message]):
                 chunk_text = _extract_chunk_text(chunk.content)
                 if chunk_text:
+                    if first_token_at is None:
+                        first_token_at = time.perf_counter()
                     collected_parts.append(chunk_text)
                     writer(chunk_text)
+                tool_accumulated = (
+                    chunk if tool_accumulated is None else tool_accumulated + chunk  # type: ignore[operator]
+                )
+            usage_total = _merge_usage(usage_total, _extract_usage(tool_accumulated))
     except Exception as exc:
         error_message = f"Error: {exc}"
         _persist_assistant_message(
@@ -246,10 +314,26 @@ async def _stream_model_and_persist(
             content=error_message,
             model_name=state["selected_model_id"],
             provider_id=state["provider_id"],
+            parent_message_id=state.get("parent_message_id"),
+            branch_index=state.get("next_branch_index", 0),
         )
         writer(error_message)
     else:
         assistant_content = "".join(collected_parts).strip() or "(No response)"
+        ended_at = time.perf_counter()
+        latency_ms = int((ended_at - started_at) * 1000)
+        ttft_ms = (
+            int((first_token_at - started_at) * 1000)
+            if first_token_at is not None
+            else None
+        )
+        metrics = {
+            "prompt_tokens": (usage_total or {}).get("input_tokens"),
+            "completion_tokens": (usage_total or {}).get("output_tokens"),
+            "total_tokens": (usage_total or {}).get("total_tokens"),
+            "latency_ms": latency_ms,
+            "time_to_first_token_ms": ttft_ms,
+        }
         message_id = _persist_assistant_message(
             db=db,
             thread_id=state["thread_id"],
@@ -257,23 +341,41 @@ async def _stream_model_and_persist(
             model_name=state["selected_model_id"],
             provider_id=state["provider_id"],
             citations=retrieved_chunks,
+            parent_message_id=state.get("parent_message_id"),
+            branch_index=state.get("next_branch_index", 0),
+            metrics=metrics,
         )
         if retrieved_chunks:
             writer("\x00CITATIONS:" + json.dumps(list(retrieved_chunks)))
         if message_id:
             writer("\x00MESSAGE_ID:" + message_id)
+        writer("\x00METRICS:" + json.dumps(metrics))
         # Update thread summary and user facts after each response (best-effort).
         asyncio.ensure_future(_run_memory_update(
             db=db,
             thread_id=state["thread_id"],
             user_id=state["user_id"],
             llm=llm,
+            dropped_history_message_ids=list(state.get("dropped_history_message_ids") or []),
         ))
     return {}
 
 
-async def _run_memory_update(*, db, thread_id: str, user_id: str, llm) -> None:
+async def _run_memory_update(
+    *,
+    db,
+    thread_id: str,
+    user_id: str,
+    llm,
+    dropped_history_message_ids: list[str],
+) -> None:
     try:
-        await update_memory(db=db, thread_id=thread_id, user_id=user_id, llm=llm)
+        await update_memory(
+            db=db,
+            thread_id=thread_id,
+            user_id=user_id,
+            llm=llm,
+            dropped_history_message_ids=dropped_history_message_ids,
+        )
     except Exception:
         pass
