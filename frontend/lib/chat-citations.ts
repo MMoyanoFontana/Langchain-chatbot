@@ -1,4 +1,7 @@
-import type { ConversationMessageCitation } from "@/components/ai-elements/conversation";
+import type {
+  ConversationMessageCitation,
+  ConversationMessageMetrics,
+} from "@/components/ai-elements/conversation";
 
 export type BackendChatCitation = {
   document_id?: string | null;
@@ -75,6 +78,31 @@ export const parseCitationHeader = (
 
 export const CITATIONS_SENTINEL = "\x00CITATIONS:";
 export const MESSAGE_ID_SENTINEL = "\x00MESSAGE_ID:";
+export const METRICS_SENTINEL = "\x00METRICS:";
+
+type BackendMetricsPayload = {
+  prompt_tokens?: number | null;
+  completion_tokens?: number | null;
+  total_tokens?: number | null;
+  latency_ms?: number | null;
+  time_to_first_token_ms?: number | null;
+};
+
+const toFiniteOrNull = (value: unknown): number | null =>
+  typeof value === "number" && Number.isFinite(value) ? value : null;
+
+export const toConversationMetrics = (
+  payload: BackendMetricsPayload | null | undefined
+): ConversationMessageMetrics | null => {
+  if (!payload) return null;
+  return {
+    promptTokens: toFiniteOrNull(payload.prompt_tokens),
+    completionTokens: toFiniteOrNull(payload.completion_tokens),
+    totalTokens: toFiniteOrNull(payload.total_tokens),
+    latencyMs: toFiniteOrNull(payload.latency_ms),
+    timeToFirstTokenMs: toFiniteOrNull(payload.time_to_first_token_ms),
+  };
+};
 
 /**
  * Splits a stream chunk on inline sentinels (CITATIONS and MESSAGE_ID).
@@ -84,16 +112,22 @@ export const MESSAGE_ID_SENTINEL = "\x00MESSAGE_ID:";
  */
 export const splitInlineCitations = (
   chunk: string
-): { text: string; citations: ConversationMessageCitation[]; messageId: string | null } => {
+): {
+  text: string;
+  citations: ConversationMessageCitation[];
+  messageId: string | null;
+  metrics: ConversationMessageMetrics | null;
+} => {
   // Find whichever sentinel comes first.
-  const citIdx = chunk.indexOf(CITATIONS_SENTINEL);
-  const msgIdx = chunk.indexOf(MESSAGE_ID_SENTINEL);
-
-  const firstIdx =
-    citIdx === -1 ? msgIdx : msgIdx === -1 ? citIdx : Math.min(citIdx, msgIdx);
+  const candidates = [
+    chunk.indexOf(CITATIONS_SENTINEL),
+    chunk.indexOf(MESSAGE_ID_SENTINEL),
+    chunk.indexOf(METRICS_SENTINEL),
+  ].filter((idx) => idx !== -1);
+  const firstIdx = candidates.length > 0 ? Math.min(...candidates) : -1;
 
   if (firstIdx === -1) {
-    return { text: chunk, citations: [], messageId: null };
+    return { text: chunk, citations: [], messageId: null, metrics: null };
   }
 
   const text = chunk.slice(0, firstIdx);
@@ -101,11 +135,11 @@ export const splitInlineCitations = (
 
   let citations: ConversationMessageCitation[] = [];
   let messageId: string | null = null;
+  let metrics: ConversationMessageMetrics | null = null;
 
   const citSentinelIdx = tail.indexOf(CITATIONS_SENTINEL);
   if (citSentinelIdx !== -1) {
     const afterCit = tail.slice(citSentinelIdx + CITATIONS_SENTINEL.length);
-    // JSON ends at the next sentinel or end of string.
     const nextSentinel = afterCit.indexOf("\x00");
     const jsonPart = nextSentinel === -1 ? afterCit : afterCit.slice(0, nextSentinel);
     try {
@@ -127,5 +161,18 @@ export const splitInlineCitations = (
     messageId = (nextSentinel === -1 ? afterMsg : afterMsg.slice(0, nextSentinel)).trim() || null;
   }
 
-  return { text, citations, messageId };
+  const metricsSentinelIdx = tail.indexOf(METRICS_SENTINEL);
+  if (metricsSentinelIdx !== -1) {
+    const afterMetrics = tail.slice(metricsSentinelIdx + METRICS_SENTINEL.length);
+    const nextSentinel = afterMetrics.indexOf("\x00");
+    const jsonPart = nextSentinel === -1 ? afterMetrics : afterMetrics.slice(0, nextSentinel);
+    try {
+      const parsed = JSON.parse(jsonPart) as BackendMetricsPayload;
+      metrics = toConversationMetrics(parsed);
+    } catch {
+      // ignore parse error
+    }
+  }
+
+  return { text, citations, messageId, metrics };
 };

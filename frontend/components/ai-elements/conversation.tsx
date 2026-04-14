@@ -112,7 +112,17 @@ export interface ConversationMessage {
   reasoning?: string | null;
   reasoningLabel?: string | null;
   reasoningStreaming?: boolean;
+  parentMessageId?: string | null;
   branchIndex?: number;
+  metrics?: ConversationMessageMetrics | null;
+}
+
+export interface ConversationMessageMetrics {
+  promptTokens?: number | null;
+  completionTokens?: number | null;
+  totalTokens?: number | null;
+  latencyMs?: number | null;
+  timeToFirstTokenMs?: number | null;
 }
 
 export interface ConversationMessageCitation {

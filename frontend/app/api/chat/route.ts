@@ -15,6 +15,8 @@ type ChatRequestBody = {
   providerCode?: string;
   attachments?: ChatAttachmentRequest[];
   regenerateFromMessageId?: string;
+  continueFromMessageId?: string;
+  compareWithUserMessageId?: string;
 };
 
 export async function POST(request: NextRequest) {
@@ -29,6 +31,8 @@ export async function POST(request: NextRequest) {
   let providerCode = "";
   let attachments: ChatAttachmentRequest[] = [];
   let regenerateFromMessageId = "";
+  let continueFromMessageId = "";
+  let compareWithUserMessageId = "";
 
   try {
     const body = (await request.json()) as ChatRequestBody;
@@ -38,11 +42,18 @@ export async function POST(request: NextRequest) {
     providerCode = body.providerCode?.trim().toLowerCase() ?? "";
     attachments = Array.isArray(body.attachments) ? body.attachments : [];
     regenerateFromMessageId = body.regenerateFromMessageId?.trim() ?? "";
+    continueFromMessageId = body.continueFromMessageId?.trim() ?? "";
+    compareWithUserMessageId = body.compareWithUserMessageId?.trim() ?? "";
   } catch {
     return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
   }
 
-  if (!prompt && attachments.length === 0 && !regenerateFromMessageId) {
+  if (
+    !prompt &&
+    attachments.length === 0 &&
+    !regenerateFromMessageId &&
+    !compareWithUserMessageId
+  ) {
     return NextResponse.json(
       { error: "Message text or at least one attachment is required." },
       { status: 400 }
@@ -62,12 +73,20 @@ export async function POST(request: NextRequest) {
     provider_code: string;
     attachments: ChatAttachmentRequest[];
     regenerate_from_message_id?: string;
+    continue_from_message_id?: string;
+    compare_with_user_message_id?: string;
   } = { prompt, model_id: modelId, provider_code: providerCode, attachments };
   if (threadId) {
     payload.thread_id = threadId;
   }
   if (regenerateFromMessageId) {
     payload.regenerate_from_message_id = regenerateFromMessageId;
+  }
+  if (continueFromMessageId) {
+    payload.continue_from_message_id = continueFromMessageId;
+  }
+  if (compareWithUserMessageId) {
+    payload.compare_with_user_message_id = compareWithUserMessageId;
   }
 
   try {
@@ -107,6 +126,10 @@ export async function POST(request: NextRequest) {
     const upstreamThreadId = upstreamResponse.headers.get("x-thread-id");
     if (upstreamThreadId) {
       responseHeaders.set("x-thread-id", upstreamThreadId);
+    }
+    const upstreamUserMessageId = upstreamResponse.headers.get("x-user-message-id");
+    if (upstreamUserMessageId) {
+      responseHeaders.set("x-user-message-id", upstreamUserMessageId);
     }
 
     return new Response(upstreamResponse.body, {

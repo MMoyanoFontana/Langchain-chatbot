@@ -2,7 +2,11 @@ import { notFound } from "next/navigation";
 
 import ChatSession from "@/components/chat-session";
 import type { ConversationMessage } from "@/components/ai-elements/conversation";
-import { toConversationCitation, type BackendChatCitation } from "@/lib/chat-citations";
+import {
+  toConversationCitation,
+  toConversationMetrics,
+  type BackendChatCitation,
+} from "@/lib/chat-citations";
 import { toChatAttachment, type BackendChatAttachment } from "@/lib/chat-attachments";
 import { fetchBackend, getServerSessionToken } from "@/lib/backend";
 
@@ -20,7 +24,13 @@ type ThreadMessageResponse = {
   citations?: BackendChatCitation[] | null;
   provider_code?: string | null;
   model_name?: string | null;
+  parent_message_id?: string | null;
   branch_index?: number;
+  prompt_tokens?: number | null;
+  completion_tokens?: number | null;
+  total_tokens?: number | null;
+  latency_ms?: number | null;
+  time_to_first_token_ms?: number | null;
 };
 
 type ThreadResponse = {
@@ -90,7 +100,15 @@ export default async function ChatPage({ params }: ChatPageProps) {
       content: message.content,
       providerCode: toProviderCode(message.provider_code),
       modelName: message.model_name ?? null,
+      parentMessageId: message.parent_message_id ?? null,
       branchIndex: message.branch_index ?? 0,
+      metrics: toConversationMetrics({
+        prompt_tokens: message.prompt_tokens,
+        completion_tokens: message.completion_tokens,
+        total_tokens: message.total_tokens,
+        latency_ms: message.latency_ms,
+        time_to_first_token_ms: message.time_to_first_token_ms,
+      }),
     }));
   return (
     <ChatSession

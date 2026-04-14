@@ -154,24 +154,30 @@ const useMessageBranch = () => {
 
 export type MessageBranchProps = HTMLAttributes<HTMLDivElement> & {
   defaultBranch?: number;
+  branch?: number;
   onBranchChange?: (branchIndex: number) => void;
 };
 
 export const MessageBranch = ({
   defaultBranch = 0,
+  branch: controlledBranch,
   onBranchChange,
   className,
   ...props
 }: MessageBranchProps) => {
-  const [currentBranch, setCurrentBranch] = useState(defaultBranch);
+  const [internalBranch, setInternalBranch] = useState(defaultBranch);
+  const isControlled = controlledBranch !== undefined;
+  const currentBranch = isControlled ? controlledBranch : internalBranch;
   const [branches, setBranches] = useState<ReactElement[]>([]);
 
   const handleBranchChange = useCallback(
     (newBranch: number) => {
-      setCurrentBranch(newBranch);
+      if (!isControlled) {
+        setInternalBranch(newBranch);
+      }
       onBranchChange?.(newBranch);
     },
-    [onBranchChange]
+    [onBranchChange, isControlled]
   );
 
   const goToPrevious = useCallback(() => {
@@ -328,7 +334,7 @@ export const MessageBranchPage = ({
       )}
       {...props}
     >
-      {currentBranch + 1} of {totalBranches}
+      {currentBranch + 1}/{totalBranches}
     </ButtonGroupText>
   );
 };
@@ -431,7 +437,7 @@ export const MessageToolbar = ({
 }: MessageToolbarProps) => (
   <div
     className={cn(
-      "mt-4 flex w-full items-center justify-between gap-4",
+      "mt-4 flex w-full items-center gap-1",
       className
     )}
     {...props}
