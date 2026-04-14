@@ -532,6 +532,26 @@ def retry_current_user_thread_document(
 # Message management
 # ---------------------------------------------------------------------------
 
+def delete_single_message(user_id: str, thread_id: str, message_id: str, db: Session) -> None:
+    thread = db.scalar(
+        select(ChatThread).where(ChatThread.id == thread_id, ChatThread.user_id == user_id)
+    )
+    if thread is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found.")
+
+    message = db.scalar(
+        select(ChatMessage).where(
+            ChatMessage.id == message_id, ChatMessage.thread_id == thread_id
+        )
+    )
+    if message is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Message not found.")
+
+    db.delete(message)
+    thread.updated_at = utc_now()
+    db.commit()
+
+
 def delete_messages_from(user_id: str, thread_id: str, message_id: str, db: Session) -> None:
     thread = db.scalar(
         select(ChatThread).where(ChatThread.id == thread_id, ChatThread.user_id == user_id)
@@ -561,6 +581,20 @@ def delete_messages_from(user_id: str, thread_id: str, message_id: str, db: Sess
         db.delete(msg)
     thread.updated_at = utc_now()
     db.commit()
+
+
+@router.delete(
+    "/me/threads/{thread_id}/messages/{message_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_current_user_message(
+    thread_id: str,
+    message_id: str,
+    user: User = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    delete_single_message(user.id, thread_id, message_id, db)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.delete(
