@@ -10,15 +10,22 @@ export type BackendProviderCode =
   | "groq"
   | "other";
 
+export type CompareModelSelection = {
+  modelId: string;
+  providerCode: BackendProviderCode;
+};
+
 export type SubmitMessagePayload = {
   message: PromptInputMessage;
   modelId: string;
   providerCode: BackendProviderCode;
+  compareWith?: CompareModelSelection[];
 };
 
 type ComposerHandlers = {
   onSubmitMessage: (payload: SubmitMessagePayload) => void | Promise<void>;
   preferredModelId: string | null;
+  forceModelId?: string | null;
 };
 
 type ChatComposerContextValue = {

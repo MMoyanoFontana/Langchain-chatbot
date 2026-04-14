@@ -10,6 +10,7 @@ function ComposerSlot() {
       <PromptComposer
         className="mx-auto w-full max-w-3xl"
         preferredModelId={handlers?.preferredModelId ?? null}
+        forceModelId={handlers?.forceModelId ?? null}
         onSubmitMessage={handlers?.onSubmitMessage}
       />
     </div>

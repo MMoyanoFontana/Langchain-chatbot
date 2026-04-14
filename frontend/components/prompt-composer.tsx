@@ -36,32 +36,16 @@ import {
 } from "@/components/ai-elements/prompt-input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import type { BackendProviderCode, SubmitMessagePayload } from "@/contexts/chat-composer-context";
-import { CheckIcon, ChevronDown, ChevronRight } from "lucide-react";
+import type {
+  BackendProviderCode,
+  CompareModelSelection,
+  SubmitMessagePayload,
+} from "@/contexts/chat-composer-context";
+import { useChatModels, type ChatModel } from "@/lib/use-chat-models";
+import { CheckIcon, ChevronDown, ChevronRight, GitCompareIcon } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
 
-interface CatalogProvider {
-    id: number;
-    code: string;
-    display_name: string;
-    is_active: boolean;
-}
-
-interface CatalogModelResponse {
-    id: number;
-    model_id: string;
-    display_name: string;
-    is_active: boolean;
-    provider: CatalogProvider;
-}
-
-interface ComposerModel {
-    id: string;
-    name: string;
-    providerLabel: string;
-    providerSlug: string;
-    providerCode: BackendProviderCode;
-}
+type ComposerModel = ChatModel;
 
 interface ProviderModelGroup {
     providerLabel: string;
@@ -73,43 +57,10 @@ interface ProviderModelGroup {
 const getProviderGroupKey = (group: ProviderModelGroup): string =>
     `${group.providerSlug}:${group.providerLabel}`;
 
-const PROVIDER_LOGO_MAP: Record<string, string> = {
-    gemini: "google",
-};
-
-const normalizeProviderSlug = (providerCode: string): string =>
-    PROVIDER_LOGO_MAP[providerCode] ?? providerCode;
-
-const normalizeProviderCode = (providerCode: string): BackendProviderCode => {
-    if (
-        providerCode === "openai" ||
-        providerCode === "anthropic" ||
-        providerCode === "gemini" ||
-        providerCode === "groq" ||
-        providerCode === "other"
-    ) {
-        return providerCode;
-    }
-    return "other";
-};
-
-const mapCatalogModelToComposerModel = (
-    catalogModel: CatalogModelResponse
-): ComposerModel => {
-    const providerSlug = normalizeProviderSlug(catalogModel.provider.code);
-
-    return {
-        id: catalogModel.model_id,
-        name: catalogModel.display_name,
-        providerLabel: catalogModel.provider.display_name,
-        providerSlug,
-        providerCode: normalizeProviderCode(catalogModel.provider.code),
-    };
-};
-
 const SUBMITTING_TIMEOUT = 200;
 const STREAMING_TIMEOUT = 2000;
 const SELECTED_MODEL_STORAGE_KEY = "langchain-chatbot.selected-model.v1";
+const COMPARE_MAX_MODELS = 3;
 
 const readStoredSelectedModel = (): string | null => {
     if (typeof window === "undefined") {
@@ -237,14 +188,8 @@ const PromptInputAttachmentsDisplay = () => {
 interface PromptComposerProps {
     className?: string;
     preferredModelId?: string | null;
+    forceModelId?: string | null;
     onSubmitMessage?: (payload: SubmitMessagePayload) => void | Promise<void>;
-}
-
-interface ProviderApiKeyResponse {
-    provider?: {
-        code?: string;
-    };
-    is_active?: boolean;
 }
 
 const normalizeModelId = (value: string | null | undefined): string | null => {
@@ -255,148 +200,90 @@ const normalizeModelId = (value: string | null | undefined): string | null => {
 const PromptComposer = ({
     className,
     preferredModelId,
+    forceModelId,
     onSubmitMessage,
 }: PromptComposerProps) => {
     const normalizedPreferredModelId = normalizeModelId(preferredModelId);
-    const [availableModels, setAvailableModels] = useState<ComposerModel[]>([]);
-    const [model, setModel] = useState<string | null>(
-        () =>
-            normalizedPreferredModelId ??
-            readStoredSelectedModel() ??
-            null
+    const {
+        models: availableModels,
+        connectedProviderCodes,
+        loading: modelsLoading,
+    } = useChatModels();
+    // The user's explicit pick. `null` means "fall back to defaults".
+    // `effectiveModel` below derives the actual id used by the UI.
+    const [userSelectedModel, setUserSelectedModel] = useState<string | null>(
+        () => readStoredSelectedModel()
     );
+    const [compareEnabled, setCompareEnabled] = useState(false);
+    const [compareModels, setCompareModels] = useState<string[]>([]);
     const [modelSelectorOpen, setModelSelectorOpen] = useState(false);
     const [collapsedProviders, setCollapsedProviders] = useState<Set<string>>(new Set());
-    const [connectedProviderCodes, setConnectedProviderCodes] = useState<Set<BackendProviderCode>>(new Set());
-    const [modelsLoading, setModelsLoading] = useState(true);
     const [status, setStatus] = useState<
         "submitted" | "streaming" | "ready" | "error"
     >("ready");
 
-    useEffect(() => {
-        let isCancelled = false;
-
-        const loadInitialData = async () => {
-            try {
-                const [modelsResponse, keysResponse] = await Promise.all([
-                    fetch("/api/models", { cache: "no-store" }),
-                    fetch("/api/user/provider-keys", { cache: "no-store" }),
-                ]);
-
-                if (!modelsResponse.ok) {
-                    throw new Error(`Models request failed with status ${modelsResponse.status}`);
-                }
-                if (!keysResponse.ok) {
-                    throw new Error(`Provider keys request failed with status ${keysResponse.status}`);
-                }
-
-                const [modelsPayload, keysPayload] = (await Promise.all([
-                    modelsResponse.json(),
-                    keysResponse.json(),
-                ])) as [CatalogModelResponse[], ProviderApiKeyResponse[]];
-
-                if (isCancelled) {
-                    return;
-                }
-
-                const mappedModels = modelsPayload.map(mapCatalogModelToComposerModel);
-
-                const connectedCodes = new Set<BackendProviderCode>();
-                for (const entry of keysPayload) {
-                    if (entry.is_active === false) {
-                        continue;
-                    }
-                    connectedCodes.add(
-                        normalizeProviderCode(entry.provider?.code?.toLowerCase() ?? "")
-                    );
-                }
-
-                setConnectedProviderCodes(connectedCodes);
-
-                if (mappedModels.length === 0) {
-                    setAvailableModels([]);
-                    setModel(null);
-                    return;
-                }
-
-                setAvailableModels(mappedModels);
-                setModel((previous) =>
-                    mappedModels.some((entry) => entry.id === previous) ? previous : null
-                );
-            } catch {
-                if (!isCancelled) {
-                    setAvailableModels([]);
-                    setModel(null);
-                    setConnectedProviderCodes(new Set());
-                }
-            } finally {
-                if (!isCancelled) {
-                    setModelsLoading(false);
-                }
-            }
+    // Derived effective model id: prefers the user's pick when valid, else
+    // the parent-provided preferred model, else the first connected model.
+    // Computed (not state-synced) so React stays in sync without effects.
+    const effectiveModel = useMemo<string | null>(() => {
+        if (modelsLoading) return userSelectedModel;
+        const isValid = (id: string | null): boolean => {
+            if (!id) return false;
+            const entry = availableModels.find((m) => m.id === id);
+            return Boolean(entry && connectedProviderCodes.has(entry.providerCode));
         };
-
-        void loadInitialData();
-
-        return () => {
-            isCancelled = true;
-        };
-    }, []);
-
-    useEffect(() => {
-        if (!normalizedPreferredModelId) {
-            return;
-        }
-
-        setModel((previous) =>
-            previous === normalizedPreferredModelId ? previous : normalizedPreferredModelId
-        );
-    }, [normalizedPreferredModelId]);
-
-    useEffect(() => {
-        if (modelsLoading) {
-            return;
-        }
-
-        const connectedModels = availableModels.filter((entry) =>
+        if (isValid(userSelectedModel)) return userSelectedModel;
+        if (isValid(normalizedPreferredModelId)) return normalizedPreferredModelId;
+        const firstConnected = availableModels.find((entry) =>
             connectedProviderCodes.has(entry.providerCode)
         );
+        return firstConnected?.id ?? null;
+    }, [
+        availableModels,
+        connectedProviderCodes,
+        modelsLoading,
+        normalizedPreferredModelId,
+        userSelectedModel,
+    ]);
 
-        setModel((previous) => {
-            if (previous && connectedModels.some((entry) => entry.id === previous)) {
-                return previous;
-            }
-
-            if (
-                normalizedPreferredModelId &&
-                connectedModels.some((entry) => entry.id === normalizedPreferredModelId)
-            ) {
-                return normalizedPreferredModelId;
-            }
-
-            if (connectedModels.length === 0) {
-                return null;
-            }
-
-            return connectedModels[0].id;
-        });
-    }, [availableModels, connectedProviderCodes, modelsLoading, normalizedPreferredModelId]);
-
+    // When a winner is selected from comparison mode, override the user's model choice.
+    const normalizedForceModelId = normalizeModelId(forceModelId);
     useEffect(() => {
-        if (model) {
-            persistSelectedModel(model);
-            return;
-        }
+        if (!normalizedForceModelId) return;
+        setUserSelectedModel(normalizedForceModelId);
+    }, [normalizedForceModelId]);
 
-        clearStoredSelectedModel();
-    }, [model]);
+    // Persist whichever model is currently effective so it survives reloads.
+    // Only writes to storage — no setState — so this is a safe effect.
+    useEffect(() => {
+        if (effectiveModel) {
+            persistSelectedModel(effectiveModel);
+        } else {
+            clearStoredSelectedModel();
+        }
+    }, [effectiveModel]);
 
     const selectedModelData =
-        model ? availableModels.find((entry) => entry.id === model) ?? null : null;
-    const canSubmit = Boolean(
-        selectedModelData &&
-        connectedProviderCodes.has(selectedModelData.providerCode)
-    );
+        effectiveModel
+            ? availableModels.find((entry) => entry.id === effectiveModel) ?? null
+            : null;
+    const compareModelsValid = compareModels
+        .map((id) => availableModels.find((entry) => entry.id === id))
+        .filter((entry): entry is ComposerModel =>
+            Boolean(entry) && connectedProviderCodes.has(entry!.providerCode)
+        );
+    const canSubmit = compareEnabled
+        ? compareModelsValid.length >= 1
+        : Boolean(
+              selectedModelData &&
+              connectedProviderCodes.has(selectedModelData.providerCode)
+          );
+    const compareSelectionLabel =
+        compareEnabled && compareModelsValid.length > 0
+            ? compareModelsValid.length === 1
+                ? compareModelsValid[0].name
+                : `${compareModelsValid.length} models`
+            : null;
 
     const modelsByProvider = useMemo(() => {
         const grouped = new Map<string, ProviderModelGroup>();
@@ -426,9 +313,34 @@ const PromptComposer = ({
     }, [availableModels, connectedProviderCodes]);
 
     const handleModelSelect = useCallback((id: string) => {
-        setModel(id);
+        if (compareEnabled) {
+            setCompareModels((prev) => {
+                if (prev.includes(id)) {
+                    return prev.filter((entry) => entry !== id);
+                }
+                if (prev.length >= COMPARE_MAX_MODELS) {
+                    return prev;
+                }
+                return [...prev, id];
+            });
+            return;
+        }
+        setUserSelectedModel(id);
         setModelSelectorOpen(false);
-    }, []);
+    }, [compareEnabled]);
+
+    const toggleCompareMode = useCallback(() => {
+        setCompareEnabled((prev) => {
+            const next = !prev;
+            if (next) {
+                // seed with the currently selected model
+                setCompareModels(effectiveModel ? [effectiveModel] : []);
+            } else {
+                setCompareModels([]);
+            }
+            return next;
+        });
+    }, [effectiveModel]);
 
     const toggleProviderGroup = useCallback((groupKey: string) => {
         setCollapsedProviders((previous) => {
@@ -449,7 +361,28 @@ const PromptComposer = ({
         if (!(hasText || hasAttachments)) {
             return;
         }
-        if (!canSubmit || !selectedModelData) {
+
+        let leadModel: ComposerModel | null = selectedModelData;
+        let compareWith: CompareModelSelection[] | undefined;
+
+        if (compareEnabled) {
+            const compareModelData = compareModels
+                .map((id) => availableModels.find((entry) => entry.id === id))
+                .filter((entry): entry is ComposerModel =>
+                    Boolean(entry) &&
+                    connectedProviderCodes.has(entry!.providerCode)
+                );
+            if (compareModelData.length === 0) {
+                return;
+            }
+            leadModel = compareModelData[0];
+            compareWith = compareModelData.slice(1).map((entry) => ({
+                modelId: entry.id,
+                providerCode: entry.providerCode,
+            }));
+        }
+
+        if (!leadModel || !connectedProviderCodes.has(leadModel.providerCode)) {
             return;
         }
 
@@ -458,8 +391,9 @@ const PromptComposer = ({
 
         const submitPromise = onSubmitMessage?.({
             message,
-            modelId: selectedModelData.id,
-            providerCode: selectedModelData.providerCode,
+            modelId: leadModel.id,
+            providerCode: leadModel.providerCode,
+            compareWith,
         });
         if (submitPromise instanceof Promise) {
             submitPromise
@@ -480,7 +414,14 @@ const PromptComposer = ({
         setTimeout(() => {
             setStatus("ready");
         }, SUBMITTING_TIMEOUT + STREAMING_TIMEOUT);
-    }, [canSubmit, onSubmitMessage, selectedModelData]);
+    }, [
+        availableModels,
+        compareEnabled,
+        compareModels,
+        connectedProviderCodes,
+        onSubmitMessage,
+        selectedModelData,
+    ]);
 
     return (
         <div className={className ?? "size-full"}>
@@ -504,6 +445,20 @@ const PromptComposer = ({
                                     <PromptInputActionAddAttachments />
                                 </PromptInputActionMenuContent>
                             </PromptInputActionMenu>
+                            <PromptInputButton
+                                disabled={modelsLoading}
+                                onClick={toggleCompareMode}
+                                size="sm"
+                                variant={compareEnabled ? "default" : "ghost"}
+                                title={
+                                    compareEnabled
+                                        ? "Compare mode: pick up to 3 models"
+                                        : "Enable compare mode"
+                                }
+                            >
+                                <GitCompareIcon className="size-4" />
+                                <span>{compareEnabled ? "Compare" : "Compare"}</span>
+                            </PromptInputButton>
                             <ModelSelector
                                 onOpenChange={setModelSelectorOpen}
                                 open={modelSelectorOpen}
@@ -516,6 +471,10 @@ const PromptComposer = ({
                                                     <Skeleton className="size-4 rounded-full" />
                                                     <Skeleton className="h-4 w-24" />
                                                 </>
+                                            ) : compareEnabled ? (
+                                                <ModelSelectorName>
+                                                    {compareSelectionLabel ?? "Pick models"}
+                                                </ModelSelectorName>
                                             ) : (
                                                 <>
                                                     {selectedModelData?.providerSlug && (
@@ -589,16 +548,32 @@ const PromptComposer = ({
                                                     }
                                                     key={groupKey}
                                                 >
-                                                    {group.models.map((entry) => (
-                                                        <ModelItem
-                                                            className={isCollapsed ? "hidden" : undefined}
-                                                            disabled={!providerConnected}
-                                                            key={entry.id}
-                                                            m={entry}
-                                                            onSelect={handleModelSelect}
-                                                            selectedModel={model}
-                                                        />
-                                                    ))}
+                                                    {group.models.map((entry) => {
+                                                        const isCompareSelected =
+                                                            compareEnabled &&
+                                                            compareModels.includes(entry.id);
+                                                        const compareLimitReached =
+                                                            compareEnabled &&
+                                                            !isCompareSelected &&
+                                                            compareModels.length >= COMPARE_MAX_MODELS;
+                                                        const effectiveSelected = compareEnabled
+                                                            ? isCompareSelected
+                                                                ? entry.id
+                                                                : null
+                                                            : effectiveModel;
+                                                        return (
+                                                            <ModelItem
+                                                                className={isCollapsed ? "hidden" : undefined}
+                                                                disabled={
+                                                                    !providerConnected || compareLimitReached
+                                                                }
+                                                                key={entry.id}
+                                                                m={entry}
+                                                                onSelect={handleModelSelect}
+                                                                selectedModel={effectiveSelected}
+                                                            />
+                                                        );
+                                                    })}
                                                 </ModelSelectorGroup>
                                             );
                                         })}
