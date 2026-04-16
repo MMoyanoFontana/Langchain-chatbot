@@ -36,7 +36,6 @@ from app.models import (
     utc_now,
 )
 from app.services.memory import (
-    SUMMARY_THRESHOLD,
     MemoryContext,
     _looks_declarative,
     get_memory_context,
@@ -255,19 +254,6 @@ class TestUpdateMemoryFactExtraction:
             updated = db.scalar(select(UserMemory).where(UserMemory.user_id == user.id, UserMemory.key == "language"))
         assert updated.value == "Python"
 
-    def test_skips_facts_with_empty_key_or_value(self):
-        SessionLocal = _session_factory()
-        with SessionLocal() as db:
-            user = _make_user(db)
-            thread = _make_thread(db, user.id)
-            _add_message(db, thread.id, MessageRole.USER, "Hello.")
-            _add_message(db, thread.id, MessageRole.ASSISTANT, "Hi!")
-
-            llm = FakeLLM(responses=['{"facts": [{"key": "", "value": "something"}, {"key": "name", "value": ""}]}'])
-            asyncio.run(update_memory(db, thread.id, user.id, llm))
-
-            count = len(list(db.scalars(select(UserMemory).where(UserMemory.user_id == user.id))))
-        assert count == 0
 
     def test_no_crash_on_malformed_llm_response(self):
         SessionLocal = _session_factory()

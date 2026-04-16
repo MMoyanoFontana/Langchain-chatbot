@@ -19,10 +19,6 @@ from sqlalchemy.orm import Session
 
 from app.models import ChatMessage, ChatThread, MessageRole, UserMemory, utc_now
 
-# Legacy threshold kept for tests that import it. The current path uses a rolling
-# summary triggered by ROLLING_SUMMARY_DROP_TRIGGER instead.
-SUMMARY_THRESHOLD = 20
-
 # Regenerate the rolling thread summary when at least this many new messages have
 # fallen out of the LLM history window since the last summary update.
 ROLLING_SUMMARY_DROP_TRIGGER = 5
