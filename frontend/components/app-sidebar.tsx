@@ -39,7 +39,25 @@ import type { SidebarUser } from "@/hooks/use-sidebar-user"
 import { useSidebarUser } from "@/hooks/use-sidebar-user"
 import { MAX_THREAD_TITLE_LENGTH, useThreadActions } from "@/hooks/use-thread-actions"
 import { useThreadHistory } from "@/hooks/use-thread-history"
-import { BotIcon, ChevronRight, MoreHorizontal, PencilIcon, PlusCircle, SearchIcon, Trash2 } from "lucide-react"
+import { BotIcon, ChevronRight, DownloadIcon, FileJsonIcon, FileTextIcon, MoreHorizontal, PencilIcon, PlusCircle, SearchIcon, Trash2 } from "lucide-react"
+import {
+    DropdownMenuSub,
+    DropdownMenuSubContent,
+    DropdownMenuSubTrigger,
+} from "@/components/ui/dropdown-menu"
+
+async function exportThread(threadId: string, title: string | null, format: "markdown" | "json") {
+    const response = await fetch(`/api/threads/${threadId}/export?format=${format}`)
+    if (!response.ok) return
+    const blob = await response.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    const safeName = (title ?? threadId).slice(0, 80).replace(/[/\\:*?"<>|]/g, "_")
+    a.download = `${safeName}.${format === "json" ? "json" : "md"}`
+    a.click()
+    URL.revokeObjectURL(url)
+}
 
 type AppSidebarProps = {
     initialUser?: SidebarUser | null
@@ -230,6 +248,30 @@ export function AppSidebar({ initialUser }: AppSidebarProps) {
                                                                     <BotIcon />
                                                                     System Prompt
                                                                 </DropdownMenuItem>
+                                                                <DropdownMenuSub>
+                                                                    <DropdownMenuSubTrigger disabled={isActionLoading}>
+                                                                        <DownloadIcon />
+                                                                        Export
+                                                                    </DropdownMenuSubTrigger>
+                                                                    <DropdownMenuSubContent>
+                                                                        <DropdownMenuItem
+                                                                            onClick={() => {
+                                                                                void exportThread(chat.id, chat.title ?? null, "markdown")
+                                                                            }}
+                                                                        >
+                                                                            <FileTextIcon />
+                                                                            Markdown
+                                                                        </DropdownMenuItem>
+                                                                        <DropdownMenuItem
+                                                                            onClick={() => {
+                                                                                void exportThread(chat.id, chat.title ?? null, "json")
+                                                                            }}
+                                                                        >
+                                                                            <FileJsonIcon />
+                                                                            JSON
+                                                                        </DropdownMenuItem>
+                                                                    </DropdownMenuSubContent>
+                                                                </DropdownMenuSub>
                                                                 <DropdownMenuSeparator />
                                                                 <DropdownMenuItem
                                                                     variant="destructive"

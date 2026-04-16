@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload, selectinload
@@ -166,6 +166,35 @@ def update_user_thread_system_prompt(
     db.commit()
     db.refresh(thread)
     return thread
+
+
+def export_user_thread(user_id: str, thread_id: str, format: str, db: Session) -> Response:
+    thread = _get_thread_or_404(db, user_id, thread_id, include_messages=True)
+
+    if format == "json":
+        thread_read = _build_thread_read(thread)
+        safe_name = (thread.title or thread_id).replace('"', "'")[:80]
+        return Response(
+            content=thread_read.model_dump_json(indent=2),
+            media_type="application/json",
+            headers={"Content-Disposition": f'attachment; filename="{safe_name}.json"'},
+        )
+
+    # markdown format (default)
+    lines: list[str] = [f"# {thread.title or 'Chat'}", ""]
+    for message in thread.messages:
+        if message.role == MessageRole.USER:
+            lines.append(f"**User:** {message.content}")
+            lines.append("")
+        elif message.role == MessageRole.ASSISTANT:
+            lines.append(f"**Assistant:** {message.content}")
+            lines.append("")
+    safe_name = (thread.title or thread_id).replace('"', "'")[:80]
+    return Response(
+        content="\n".join(lines).strip(),
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{safe_name}.md"'},
+    )
 
 
 def delete_user_thread(user_id: str, thread_id: str, db: Session) -> Response:
@@ -533,6 +562,16 @@ def delete_current_user_thread(
     db: Session = Depends(get_db),
 ) -> Response:
     return delete_user_thread(user.id, thread_id, db)
+
+
+@router.get("/me/threads/{thread_id}/export")
+def export_current_user_thread(
+    thread_id: str,
+    format: str = Query(default="markdown", pattern="^(markdown|json)$"),
+    user: User = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    return export_user_thread(user.id, thread_id, format, db)
 
 
 @router.delete("/me/threads/{thread_id}/documents/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
