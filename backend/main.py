@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -32,10 +34,24 @@ from app.rate_limit import get_rate_limit, limiter
 from app.runtime_config import get_cors_allowed_origins
 from app.schemas import ChatRequest
 from app.services.auth import purge_expired_sessions
+from app.services.catalog_sync import sync_catalog
 from app.services.current_user import require_current_user
 from app.services.rag import get_rag_service
 
 load_dotenv()
+
+
+async def _catalog_sync_loop() -> None:
+    interval_hours = int(os.getenv("CATALOG_SYNC_INTERVAL_HOURS", "24"))
+    loop = asyncio.get_event_loop()
+    while True:
+        try:
+            with SessionLocal() as db:
+                await loop.run_in_executor(None, sync_catalog, db)
+            LOGGER.info("catalog_sync_loop completed, next run in %dh", interval_hours)
+        except Exception:
+            LOGGER.exception("catalog_sync_loop_error")
+        await asyncio.sleep(interval_hours * 3600)
 
 
 @asynccontextmanager
@@ -43,7 +59,11 @@ async def lifespan(_app: FastAPI):
     init_db()
     with SessionLocal() as db:
         purge_expired_sessions(db)
+    sync_task = asyncio.create_task(_catalog_sync_loop())
     yield
+    sync_task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await sync_task
 
 
 app = FastAPI(lifespan=lifespan)
