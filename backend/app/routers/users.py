@@ -8,12 +8,13 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.db import get_db
-from app.models import ChatMessage, ChatThread, DocumentIndexStatus, IndexedDocument, Provider, ProviderApiKey, ProviderCode, User, UserMemory, utc_now
+from app.models import ChatMessage, ChatThread, DocumentIndexStatus, IndexedDocument, MessageRole, Provider, ProviderApiKey, ProviderCode, User, UserMemory, utc_now
 from app.schemas import (
     ChatMessageRead,
     ChatThreadDocumentRead,
     ChatThreadRead,
     ChatThreadSummaryRead,
+    ChatThreadSystemPromptUpdate,
     ChatThreadUpdate,
     ProviderApiKeyRead,
     ProviderApiKeyUpdate,
@@ -92,6 +93,7 @@ def _build_thread_read(thread: ChatThread) -> ChatThreadRead:
     return ChatThreadRead(
         id=thread.id,
         title=thread.title,
+        system_prompt=thread.system_prompt,
         created_at=thread.created_at,
         updated_at=thread.updated_at,
         documents=[ChatThreadDocumentRead.model_validate(document) for document in documents],
@@ -147,6 +149,20 @@ def update_user_thread(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Thread title cannot be blank.")
 
     thread.title = normalized_title
+    db.commit()
+    db.refresh(thread)
+    return thread
+
+
+def update_user_thread_system_prompt(
+    user_id: str,
+    thread_id: str,
+    payload: ChatThreadSystemPromptUpdate,
+    db: Session,
+) -> ChatThread:
+    thread = _get_thread_or_404(db, user_id, thread_id)
+    raw = payload.system_prompt
+    thread.system_prompt = raw.strip() if isinstance(raw, str) and raw.strip() else None
     db.commit()
     db.refresh(thread)
     return thread
@@ -498,6 +514,16 @@ def update_current_user_thread(
     db: Session = Depends(get_db),
 ) -> ChatThread:
     return update_user_thread(user.id, thread_id, payload, db)
+
+
+@router.patch("/me/threads/{thread_id}/system-prompt", response_model=ChatThreadSummaryRead)
+def update_current_user_thread_system_prompt(
+    thread_id: str,
+    payload: ChatThreadSystemPromptUpdate,
+    user: User = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> ChatThread:
+    return update_user_thread_system_prompt(user.id, thread_id, payload, db)
 
 
 @router.delete("/me/threads/{thread_id}", status_code=status.HTTP_204_NO_CONTENT)

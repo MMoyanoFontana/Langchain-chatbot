@@ -33,12 +33,13 @@ import { DeleteThreadDialog } from "@/components/delete-thread-dialog"
 import { NavUser } from "@/components/nav-user"
 import { RenameThreadDialog } from "@/components/rename-thread-dialog"
 import { SettingsDialog } from "@/components/settings-dialog"
+import { SystemPromptDialog } from "@/components/system-prompt-dialog"
 import { useKeyboardShortcut } from "@/hooks/use-keyboard-shortcut"
 import type { SidebarUser } from "@/hooks/use-sidebar-user"
 import { useSidebarUser } from "@/hooks/use-sidebar-user"
 import { MAX_THREAD_TITLE_LENGTH, useThreadActions } from "@/hooks/use-thread-actions"
 import { useThreadHistory } from "@/hooks/use-thread-history"
-import { ChevronRight, MoreHorizontal, PencilIcon, PlusCircle, SearchIcon, Trash2 } from "lucide-react"
+import { BotIcon, ChevronRight, MoreHorizontal, PencilIcon, PlusCircle, SearchIcon, Trash2 } from "lucide-react"
 
 type AppSidebarProps = {
     initialUser?: SidebarUser | null
@@ -67,20 +68,27 @@ export function AppSidebar({ initialUser }: AppSidebarProps) {
         threadActionLoadingId,
         renameDialogOpen,
         deleteDialogOpen,
+        systemPromptDialogOpen,
         activeThread,
         renameValue,
         renameError,
         deleteError,
+        systemPromptValue,
+        systemPromptError,
         renameValidationError,
         canSubmitRename,
         canSubmitDelete,
         setRenameValue,
+        setSystemPromptValue,
         openRenameDialog,
         openDeleteDialog,
+        openSystemPromptDialog,
         closeRenameDialog,
         closeDeleteDialog,
+        closeSystemPromptDialog,
         submitRename,
         submitDelete,
+        submitSystemPrompt,
     } = useThreadActions({
         pathname,
         refreshHistory,
@@ -213,6 +221,15 @@ export function AppSidebar({ initialUser }: AppSidebarProps) {
                                                                     <PencilIcon />
                                                                     Rename
                                                                 </DropdownMenuItem>
+                                                                <DropdownMenuItem
+                                                                    disabled={isActionLoading}
+                                                                    onClick={() => {
+                                                                        openSystemPromptDialog(chat)
+                                                                    }}
+                                                                >
+                                                                    <BotIcon />
+                                                                    System Prompt
+                                                                </DropdownMenuItem>
                                                                 <DropdownMenuSeparator />
                                                                 <DropdownMenuItem
                                                                     variant="destructive"
@@ -289,6 +306,17 @@ export function AppSidebar({ initialUser }: AppSidebarProps) {
                     void submitDelete()
                 }}
                 onClose={closeDeleteDialog}
+            />
+            <SystemPromptDialog
+                open={systemPromptDialogOpen}
+                value={systemPromptValue}
+                requestError={systemPromptError}
+                isSubmitting={Boolean(threadActionLoadingId)}
+                onValueChange={setSystemPromptValue}
+                onSubmit={() => {
+                    void submitSystemPrompt()
+                }}
+                onClose={closeSystemPromptDialog}
             />
         </>
     )

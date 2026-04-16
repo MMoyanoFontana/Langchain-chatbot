@@ -112,6 +112,11 @@ async def run_chat_graph(
         "continue_from_message_id": payload.continue_from_message_id,
         "compare_with_user_message_id": payload.compare_with_user_message_id,
     }
+    if "system_prompt" in payload.model_fields_set:
+        graph_input["request_system_prompt"] = payload.system_prompt
+        graph_input["should_update_system_prompt"] = True
+    if "title" in payload.model_fields_set and payload.title:
+        graph_input["request_title"] = payload.title.strip() or None
     final_state = await CHAT_GRAPH.ainvoke(
         graph_input,
         config={
@@ -149,6 +154,7 @@ async def run_chat_graph(
         parent_message_id=final_state.get("parent_message_id"),
         next_branch_index=final_state.get("next_branch_index", 0),
         user_message_id=final_state.get("user_message_id"),
+        thread_system_prompt=final_state.get("thread_system_prompt"),
     )
 
 
@@ -169,4 +175,5 @@ def build_model_stream_input(result: ChatGraphResult) -> ChatModelStreamState:
         "thread_has_documents": result.thread_has_documents,
         "parent_message_id": result.parent_message_id,
         "next_branch_index": result.next_branch_index,
+        "thread_system_prompt": result.thread_system_prompt,
     }

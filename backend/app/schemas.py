@@ -127,6 +127,11 @@ class ChatRequest(BaseModel):
         default=None,
         validation_alias=AliasChoices("thread_id", "threadId"),
     )
+    title: str | None = Field(
+        default=None,
+        max_length=CHAT_THREAD_TITLE_MAX_LENGTH,
+        validation_alias=AliasChoices("title", "title"),
+    )
     model_id: str | None = Field(
         default=None,
         validation_alias=AliasChoices("model_id", "modelId"),
@@ -149,6 +154,10 @@ class ChatRequest(BaseModel):
         validation_alias=AliasChoices(
             "compare_with_user_message_id", "compareWithUserMessageId"
         ),
+    )
+    system_prompt: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("system_prompt", "systemPrompt"),
     )
 
 
@@ -201,6 +210,7 @@ class ChatThreadSummaryRead(BaseModel):
 
     id: str
     title: str | None
+    system_prompt: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -210,6 +220,7 @@ class ChatThreadRead(BaseModel):
 
     id: str
     title: str | None
+    system_prompt: str | None = None
     created_at: datetime
     updated_at: datetime
     documents: list[ChatThreadDocumentRead] = Field(default_factory=list)
@@ -218,6 +229,10 @@ class ChatThreadRead(BaseModel):
 
 class ChatThreadUpdate(BaseModel):
     title: str = Field(min_length=1, max_length=CHAT_THREAD_TITLE_MAX_LENGTH)
+
+
+class ChatThreadSystemPromptUpdate(BaseModel):
+    system_prompt: str | None = None
 
 
 class UserMemoryRead(BaseModel):

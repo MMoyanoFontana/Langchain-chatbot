@@ -49,6 +49,10 @@ class ChatGraphState(TypedDict, total=False):
     base_model_prompt: str
     model_prompt: str
     system_addendum: str
+    thread_system_prompt: str | None
+    request_system_prompt: str | None
+    should_update_system_prompt: bool
+    request_title: str | None
     history_messages: list["HistoryMessageState"]
     dropped_history_count: int
     dropped_history_message_ids: list[str]
@@ -81,6 +85,7 @@ class ChatGraphState(TypedDict, total=False):
 class ChatModelStreamState(TypedDict, total=False):
     prompt: str
     system_addendum: str
+    thread_system_prompt: str | None
     history_messages: list["HistoryMessageState"]
     dropped_history_count: int
     dropped_history_message_ids: list[str]
@@ -115,6 +120,7 @@ class ChatGraphResult:
     parent_message_id: str | None = None
     next_branch_index: int = 0
     user_message_id: str | None = None
+    thread_system_prompt: str | None = None
 
 
 class ChatAttachmentState(TypedDict):
@@ -536,12 +542,20 @@ def _load_thread_history(
         if thread is None:
             return _error_state(status.HTTP_404_NOT_FOUND, "Chat thread not found.")
     else:
-        thread = ChatThread(user_id=user_id, title=_build_thread_title(prompt, attachments))
+        request_title = _normalize_optional_text(state.get("request_title"))
+        title = request_title if request_title else _build_thread_title(prompt, attachments)
+        thread = ChatThread(user_id=user_id, title=title)
         db.add(thread)
         db.commit()
         db.refresh(thread)
 
-    return {"user_id": user_id, "thread_id": thread.id}
+    if state.get("should_update_system_prompt"):
+        raw = state.get("request_system_prompt")
+        thread.system_prompt = raw.strip() if isinstance(raw, str) and raw.strip() else None
+        db.commit()
+        db.refresh(thread)
+
+    return {"user_id": user_id, "thread_id": thread.id, "thread_system_prompt": thread.system_prompt}
 
 
 def _resolve_user_provider_key(
@@ -756,7 +770,7 @@ async def _ingest_attachments(
         }
 
     rag_service = _get_rag_service(config)
-    # Ingest synchronously so documents are INDEXED before _retrieve_context
+    # Ingest synchronously so documents are INDEXED before _build_context_addendum
     # decides whether to bind the search_documents tool. Background indexing
     # races with the LLM stream and leaves the file unreachable on the same
     # turn it was uploaded.

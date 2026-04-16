@@ -222,12 +222,10 @@ async def _stream_model_and_persist(
             api_key=api_key,
         )
 
+        thread_system_prompt = (state.get("thread_system_prompt") or "").strip()
+        base_prompt = thread_system_prompt or ASSISTANT_SYSTEM_PROMPT
         system_addendum = state.get("system_addendum") or ""
-        system_content = (
-            f"{ASSISTANT_SYSTEM_PROMPT}\n\n{system_addendum}"
-            if system_addendum
-            else ASSISTANT_SYSTEM_PROMPT
-        )
+        system_content = f"{base_prompt}\n\n{system_addendum}" if system_addendum else base_prompt
         messages: list = [SystemMessage(content=system_content)]
         for history_msg in state.get("history_messages") or []:
             role = history_msg.get("role")

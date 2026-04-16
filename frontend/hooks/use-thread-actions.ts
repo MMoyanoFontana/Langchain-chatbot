@@ -47,10 +47,13 @@ export function useThreadActions({
   const [threadActionLoadingId, setThreadActionLoadingId] = useState<string | null>(null);
   const [renameDialogOpen, setRenameDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [systemPromptDialogOpen, setSystemPromptDialogOpen] = useState(false);
   const [activeThread, setActiveThread] = useState<ThreadHistoryItem | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [renameError, setRenameError] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [systemPromptValue, setSystemPromptValue] = useState("");
+  const [systemPromptError, setSystemPromptError] = useState<string | null>(null);
 
   const normalizedRenameValue = renameValue.trim();
   const renameUnchanged = activeThread
@@ -115,6 +118,51 @@ export function useThreadActions({
     setDeleteError(null);
     setActiveThread(null);
   }, [threadActionLoadingId]);
+
+  const openSystemPromptDialog = useCallback((thread: ThreadHistoryItem) => {
+    setActiveThread(thread);
+    setSystemPromptValue(thread.systemPrompt ?? "");
+    setSystemPromptError(null);
+    setSystemPromptDialogOpen(true);
+  }, []);
+
+  const closeSystemPromptDialog = useCallback(() => {
+    if (threadActionLoadingId) return;
+    setSystemPromptDialogOpen(false);
+    setSystemPromptError(null);
+    setActiveThread(null);
+    setSystemPromptValue("");
+  }, [threadActionLoadingId]);
+
+  const submitSystemPrompt = useCallback(async () => {
+    if (!activeThread) return;
+
+    setThreadActionLoadingId(activeThread.id);
+    setSystemPromptError(null);
+
+    try {
+      const response = await fetch(`/api/threads/${activeThread.id}/system-prompt`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ system_prompt: systemPromptValue.trim() || null }),
+      });
+
+      if (!response.ok) {
+        const message = await parseActionError(response, "Failed to update system prompt.");
+        throw new Error(message);
+      }
+
+      closeSystemPromptDialog();
+      await refreshHistory();
+      dispatchThreadUpdate();
+    } catch (error) {
+      setSystemPromptError(
+        error instanceof Error ? error.message : "Could not update system prompt."
+      );
+    } finally {
+      setThreadActionLoadingId(null);
+    }
+  }, [activeThread, closeSystemPromptDialog, dispatchThreadUpdate, refreshHistory, systemPromptValue]);
 
   const submitRename = useCallback(async () => {
     if (!activeThread) {
@@ -211,19 +259,26 @@ export function useThreadActions({
     threadActionLoadingId,
     renameDialogOpen,
     deleteDialogOpen,
+    systemPromptDialogOpen,
     activeThread,
     renameValue,
     renameError,
     deleteError,
+    systemPromptValue,
+    systemPromptError,
     renameValidationError,
     canSubmitRename,
     canSubmitDelete,
     setRenameValue,
+    setSystemPromptValue,
     openRenameDialog,
     openDeleteDialog,
+    openSystemPromptDialog,
     closeRenameDialog,
     closeDeleteDialog,
+    closeSystemPromptDialog,
     submitRename,
     submitDelete,
+    submitSystemPrompt,
   };
 }

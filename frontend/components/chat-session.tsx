@@ -39,6 +39,7 @@ import {
 } from "@/components/ai-elements/message";
 import { Shimmer } from "@/components/ai-elements/shimmer";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   Dialog,
@@ -46,11 +47,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { SystemPromptDialog } from "@/components/system-prompt-dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { splitInlineCitations } from "@/lib/chat-citations";
 import { toBackendChatAttachment } from "@/lib/chat-attachments";
-import { CheckCircle2Icon, CheckIcon, CopyIcon, FileTextIcon, Maximize2Icon, RefreshCwIcon, ServerIcon } from "lucide-react";
+import { BotIcon, CheckCircle2Icon, CheckIcon, CopyIcon, FileTextIcon, Maximize2Icon, RefreshCwIcon, ServerIcon, Settings2Icon } from "lucide-react";
 import { useRouter } from "next/navigation";
 import type {
   BackendProviderCode,
@@ -71,6 +73,7 @@ const buildPendingReasoningLabel = (attachmentCount: number) =>
 interface ChatSessionProps {
   initialMessages?: ConversationMessage[];
   initialThreadId?: string;
+  initialSystemPrompt?: string | null;
 }
 
 const toProviderLogo = (providerCode: NonNullable<ConversationMessage["providerCode"]>) => {
@@ -719,10 +722,11 @@ const BranchedAssistantItem = memo(({
 
 BranchedAssistantItem.displayName = "BranchedAssistantItem";
 
+
 let localIdCounter = 0;
 const nextLocalId = () => `local-${Date.now()}-${++localIdCounter}`;
 
-const ChatSession = ({ initialMessages, initialThreadId }: ChatSessionProps) => {
+const ChatSession = ({ initialMessages, initialThreadId, initialSystemPrompt }: ChatSessionProps) => {
   const router = useRouter();
   const preferredModelId = useMemo(
     () => getLastUsedModelId(initialMessages),
@@ -733,6 +737,15 @@ const ChatSession = ({ initialMessages, initialThreadId }: ChatSessionProps) => 
   const [hasThreadRoute, setHasThreadRoute] = useState<boolean>(() => Boolean(initialThreadId));
   const [branchSelections, setBranchSelections] = useState<Map<string, number>>(() => new Map());
   const [winnerModelId, setWinnerModelId] = useState<string | null>(null);
+
+  // Pending config for new chats (kept in memory until first message is sent)
+  const [pendingSystemPrompt, setPendingSystemPrompt] = useState<string | null>(
+    initialSystemPrompt ?? null
+  );
+  const [setupDialogOpen, setSetupDialogOpen] = useState(false);
+  const [setupSystemPromptDraft, setSetupSystemPromptDraft] = useState("");
+  // Whether the first message has been sent (so we stop attaching the pending config)
+  const firstMessageSentRef = useRef(false);
 
   useEffect(() => {
     if (initialMessages) {
@@ -951,6 +964,14 @@ const ChatSession = ({ initialMessages, initialThreadId }: ChatSessionProps) => 
 
     const shouldRedirectToThread = !hasThreadRoute;
 
+    // Attach pending config only on the first message of a new chat
+    const isFirstMessage = !firstMessageSentRef.current && !hasThreadRoute;
+    const firstMessageExtras: Record<string, string> = {};
+    if (isFirstMessage) {
+      if (pendingSystemPrompt) firstMessageExtras.systemPrompt = pendingSystemPrompt;
+      firstMessageSentRef.current = true;
+    }
+
     const baseRequestBody = {
       attachments: userAttachments.map(toBackendChatAttachment),
       prompt: userContent,
@@ -961,6 +982,7 @@ const ChatSession = ({ initialMessages, initialThreadId }: ChatSessionProps) => 
         ? { regenerateFromMessageId: payload.regenerateFromMessageId }
         : {}),
       ...(continueFromMessageId ? { continueFromMessageId } : {}),
+      ...firstMessageExtras,
     };
 
     // Lead request: creates the user message (or branches off the existing one
@@ -1000,7 +1022,7 @@ const ChatSession = ({ initialMessages, initialThreadId }: ChatSessionProps) => 
       router.replace(`/chats/${leadResult.threadId}`);
     }
     window.dispatchEvent(new Event("chat-threads-updated"));
-  }, [hasThreadRoute, router, streamChatRequest, threadId]);
+  }, [hasThreadRoute, pendingSystemPrompt, router, streamChatRequest, threadId]);
 
   const handleRegenerateFrom = useCallback(
     async (
@@ -1104,6 +1126,17 @@ const ChatSession = ({ initialMessages, initialThreadId }: ChatSessionProps) => 
 
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
+      <SystemPromptDialog
+        open={setupDialogOpen}
+        value={setupSystemPromptDraft}
+        isSubmitting={false}
+        onValueChange={setSetupSystemPromptDraft}
+        onSubmit={() => {
+          setPendingSystemPrompt(setupSystemPromptDraft.trim() || null);
+          setSetupDialogOpen(false);
+        }}
+        onClose={() => setSetupDialogOpen(false)}
+      />
       <Conversation className="min-h-0 min-w-0 flex-1">
         <ConversationContent
           className={`mx-auto w-full max-w-3xl ${
@@ -1111,11 +1144,37 @@ const ChatSession = ({ initialMessages, initialThreadId }: ChatSessionProps) => 
           }`}
         >
           {messages.length === 0 ? (
-            <ConversationEmptyState
-              className="[&_h3]:text-2xl [&_h3]:font-semibold [&_p]:text-base"
-              description="Ask me anything to get started. I am here to help."
-              title="Ready when you are"
-            />
+            <div className="flex h-full flex-col items-center justify-center gap-4">
+              <ConversationEmptyState
+                className="[&_h3]:text-2xl [&_h3]:font-semibold [&_p]:text-base"
+                description="Ask me anything to get started. I am here to help."
+                title="Ready when you are"
+              />
+              {!initialThreadId ? (
+                <div className="flex flex-col items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-1.5"
+                    onClick={() => {
+                      setSetupSystemPromptDraft(pendingSystemPrompt ?? "");
+                      setSetupDialogOpen(true);
+                    }}
+                  >
+                    <Settings2Icon className="size-3.5" />
+                    Configure prompt
+                  </Button>
+                  {pendingSystemPrompt ? (
+                    <div className="flex flex-wrap justify-center gap-1.5">
+                      <Badge variant="secondary" className="gap-1 text-xs">
+                        <BotIcon className="size-3" />
+                        System prompt set
+                      </Badge>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
           ) : (
             displayEntries.map((entry) =>
               entry.type === "single" ? (

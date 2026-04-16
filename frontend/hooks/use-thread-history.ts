@@ -5,11 +5,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 type ThreadSummaryResponse = {
   id: string;
   title: string | null;
+  system_prompt: string | null;
 };
 
 export type ThreadHistoryItem = {
   id: string;
   title: string;
+  systemPrompt: string | null;
 };
 
 const THREADS_UPDATED_EVENT = "chat-threads-updated";
@@ -46,6 +48,7 @@ export function useThreadHistory(refreshKey?: string) {
         payload.map((thread) => ({
           id: thread.id,
           title: thread.title?.trim() || "Untitled chat",
+          systemPrompt: thread.system_prompt ?? null,
         }))
       );
     } catch {
