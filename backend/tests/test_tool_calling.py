@@ -211,7 +211,7 @@ class TestRetrieveContextDocCheck:
         thread_summary: str | None = None,
         user_memory_facts: list | None = None,
     ) -> dict:
-        from app.graphs._nodes import _retrieve_context
+        from app.graphs._nodes import _build_context_addendum as _retrieve_context
         from unittest.mock import MagicMock
 
         fake_rag = MagicMock()

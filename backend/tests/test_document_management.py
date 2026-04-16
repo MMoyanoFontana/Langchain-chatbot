@@ -365,7 +365,9 @@ class TestRetryDocument:
 # ---------------------------------------------------------------------------
 
 def _build_test_app(db: Session, current_user: User) -> TestClient:
+    from app.rate_limit import limiter
     app = FastAPI()
+    app.state.limiter = limiter
     app.include_router(users_router.router)
     app.dependency_overrides[get_db] = lambda: db
     app.dependency_overrides[require_current_user] = lambda: current_user
