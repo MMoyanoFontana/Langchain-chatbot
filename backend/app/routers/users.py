@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload, selectinload
@@ -25,6 +25,7 @@ from app.schemas import (
     UserRead,
     UserUpdate,
 )
+from app.rate_limit import get_rate_limit, limiter
 from app.security import EncryptionConfigError, decrypt_secret, encrypt_secret, mask_secret
 from app.services.current_user import require_current_user
 from app.services.rag import RagConfigurationError, get_rag_service
@@ -519,7 +520,9 @@ def delete_current_user_thread_document(
 
 
 @router.post("/me/threads/{thread_id}/documents/{document_id}/retry", response_model=ChatThreadDocumentRead)
+@limiter.limit(get_rate_limit)
 def retry_current_user_thread_document(
+    request: Request,
     thread_id: str,
     document_id: str,
     user: User = Depends(require_current_user),

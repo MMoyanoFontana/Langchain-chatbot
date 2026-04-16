@@ -7,9 +7,11 @@ from contextlib import asynccontextmanager
 
 import uvicorn
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 from starlette.background import BackgroundTask
 from sqlalchemy import text
 
@@ -26,6 +28,7 @@ from app.models import User
 from app.routers.auth import router as auth_router
 from app.routers.catalog import router as catalog_router
 from app.routers.users import router as users_router
+from app.rate_limit import get_rate_limit, limiter
 from app.runtime_config import get_cors_allowed_origins
 from app.schemas import ChatRequest
 from app.services.auth import purge_expired_sessions
@@ -44,6 +47,9 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,
@@ -86,7 +92,8 @@ def health() -> dict[str, str]:
 
 
 @app.post("/chat")
-async def chat(payload: ChatRequest, user: User = Depends(require_current_user)):
+@limiter.limit(get_rate_limit)
+async def chat(request: Request, payload: ChatRequest, user: User = Depends(require_current_user)):
     db = SessionLocal()
     closed = False
 
