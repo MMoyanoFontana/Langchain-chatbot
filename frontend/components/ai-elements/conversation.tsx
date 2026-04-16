@@ -115,6 +115,8 @@ export interface ConversationMessage {
   parentMessageId?: string | null;
   branchIndex?: number;
   metrics?: ConversationMessageMetrics | null;
+  activeToolCall?: { name: string; query: string } | null;
+  traceUrl?: string | null;
 }
 
 export interface ConversationMessageMetrics {

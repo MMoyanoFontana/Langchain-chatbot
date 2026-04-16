@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 
 from fastapi import HTTPException, status
@@ -246,9 +247,10 @@ async def _stream_model_and_persist(
         llm_with_tools = llm.bind_tools(tools)
         accumulated: AIMessageChunk | None = None
         tools_supported = True
+        messages_for_llm = list(messages)
 
         try:
-            async for chunk in llm_with_tools.astream(messages):
+            async for chunk in llm_with_tools.astream(messages_for_llm):
                 chunk_text = _extract_chunk_text(chunk.content)
                 if chunk_text:
                     if first_token_at is None:
@@ -264,7 +266,7 @@ async def _stream_model_and_persist(
             tools_supported = False
             collected_parts = []
             accumulated = None
-            async for chunk in llm.astream(messages):
+            async for chunk in llm.astream(messages_for_llm):
                 chunk_text = _extract_chunk_text(chunk.content)
                 if chunk_text:
                     if first_token_at is None:
@@ -274,36 +276,46 @@ async def _stream_model_and_persist(
                 accumulated = chunk if accumulated is None else accumulated + chunk  # type: ignore[operator]
         usage_total = _merge_usage(usage_total, _extract_usage(accumulated))
 
-        # If the model decided to call a tool, execute it and stream the final answer.
-        if tools_supported and accumulated is not None and accumulated.tool_calls:
-            tool_call = accumulated.tool_calls[0]
-            tool_content, retrieved_chunks = await _execute_tool_call(tool_call, state, config)
-            _persist_tool_message(
-                db=db,
-                thread_id=state["thread_id"],
-                tool_name=tool_call.get("name", ""),
-                tool_input=tool_call.get("args") or {},
-                tool_output=tool_content,
-                model_name=state["selected_model_id"],
-                provider_id=state["provider_id"],
+        # Agentic tool-call loop: keep executing tool calls and re-streaming until
+        # the model produces a final text response with no further tool calls.
+        while tools_supported and accumulated is not None and accumulated.tool_calls:
+            # Emit a visibility event for each tool call before executing.
+            for tc in accumulated.tool_calls:
+                query = (tc.get("args") or {}).get("query") or ""
+                writer("\x00TOOL_CALL:" + json.dumps({"name": tc.get("name", ""), "query": query}))
+
+            # Execute all tool calls in this turn in parallel.
+            results = await asyncio.gather(
+                *[_execute_tool_call(tc, state, config) for tc in accumulated.tool_calls]
             )
-            tool_message = ToolMessage(
-                content=tool_content,
-                tool_call_id=tool_call["id"],
-            )
+
+            tool_messages_list: list[ToolMessage] = []
+            for tc, (tool_content, chunks) in zip(accumulated.tool_calls, results):
+                retrieved_chunks.extend(chunks)
+                _persist_tool_message(
+                    db=db,
+                    thread_id=state["thread_id"],
+                    tool_name=tc.get("name", ""),
+                    tool_input=tc.get("args") or {},
+                    tool_output=tool_content,
+                    model_name=state["selected_model_id"],
+                    provider_id=state["provider_id"],
+                )
+                tool_messages_list.append(ToolMessage(content=tool_content, tool_call_id=tc["id"]))
+
+            messages_for_llm = messages_for_llm + [accumulated] + tool_messages_list
             collected_parts = []
-            tool_accumulated: AIMessageChunk | None = None
-            async for chunk in llm.astream(messages + [accumulated, tool_message]):
+            accumulated = None
+
+            async for chunk in llm_with_tools.astream(messages_for_llm):
                 chunk_text = _extract_chunk_text(chunk.content)
                 if chunk_text:
                     if first_token_at is None:
                         first_token_at = time.perf_counter()
                     collected_parts.append(chunk_text)
                     writer(chunk_text)
-                tool_accumulated = (
-                    chunk if tool_accumulated is None else tool_accumulated + chunk  # type: ignore[operator]
-                )
-            usage_total = _merge_usage(usage_total, _extract_usage(tool_accumulated))
+                accumulated = chunk if accumulated is None else accumulated + chunk  # type: ignore[operator]
+            usage_total = _merge_usage(usage_total, _extract_usage(accumulated))
     except Exception as exc:
         error_message = f"Error: {exc}"
         _persist_assistant_message(
@@ -348,8 +360,11 @@ async def _stream_model_and_persist(
         if message_id:
             writer("\x00MESSAGE_ID:" + message_id)
         writer("\x00METRICS:" + json.dumps(metrics))
+        run_id = config.get("run_id")
+        if run_id and os.environ.get("LANGSMITH_API_KEY"):
+            writer(f"\x00TRACE_URL:https://smith.langchain.com/runs/{run_id}")
         # Update thread summary and user facts after each response (best-effort).
-        asyncio.ensure_future(_run_memory_update(
+        asyncio.create_task(_run_memory_update(
             db=db,
             thread_id=state["thread_id"],
             user_id=state["user_id"],

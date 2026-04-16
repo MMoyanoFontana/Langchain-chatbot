@@ -790,7 +790,7 @@ async def _ingest_attachments(
     }
 
 
-async def _retrieve_context(
+async def _build_context_addendum(
     state: ChatGraphState,
     config: RunnableConfig,
 ) -> dict[str, object]:

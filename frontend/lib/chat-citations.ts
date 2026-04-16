@@ -79,6 +79,8 @@ export const parseCitationHeader = (
 export const CITATIONS_SENTINEL = "\x00CITATIONS:";
 export const MESSAGE_ID_SENTINEL = "\x00MESSAGE_ID:";
 export const METRICS_SENTINEL = "\x00METRICS:";
+export const TOOL_CALL_SENTINEL = "\x00TOOL_CALL:";
+export const TRACE_URL_SENTINEL = "\x00TRACE_URL:";
 
 type BackendMetricsPayload = {
   prompt_tokens?: number | null;
@@ -105,10 +107,11 @@ export const toConversationMetrics = (
 };
 
 /**
- * Splits a stream chunk on inline sentinels (CITATIONS and MESSAGE_ID).
- * Returns `{ text, citations, messageId }` where `text` is the displayable content.
- * Sentinels are always emitted at the very end of the stream, so we can strip
- * everything from the first sentinel onwards.
+ * Splits a stream chunk on inline sentinels (CITATIONS, MESSAGE_ID, METRICS, TOOL_CALL).
+ * Returns `{ text, citations, messageId, metrics, toolCalls }` where `text` is the
+ * displayable content. CITATIONS/MESSAGE_ID/METRICS are always emitted at the end of
+ * the stream. TOOL_CALL is emitted mid-stream before tool execution; it is stripped
+ * out of the displayable text and returned separately.
  */
 export const splitInlineCitations = (
   chunk: string
@@ -117,25 +120,52 @@ export const splitInlineCitations = (
   citations: ConversationMessageCitation[];
   messageId: string | null;
   metrics: ConversationMessageMetrics | null;
+  toolCalls: Array<{ name: string; query: string }>;
+  traceUrl: string | null;
 } => {
-  // Find whichever sentinel comes first.
+  // Strip mid-stream TOOL_CALL events before applying end-of-stream sentinel logic.
+  let strippedChunk = chunk;
+  const toolCalls: Array<{ name: string; query: string }> = [];
+
+  let tcIdx = strippedChunk.indexOf(TOOL_CALL_SENTINEL);
+  while (tcIdx !== -1) {
+    const before = strippedChunk.slice(0, tcIdx);
+    const after = strippedChunk.slice(tcIdx + TOOL_CALL_SENTINEL.length);
+    const nextSentinel = after.indexOf("\x00");
+    const jsonPart = nextSentinel === -1 ? after : after.slice(0, nextSentinel);
+    const remaining = nextSentinel === -1 ? "" : after.slice(nextSentinel);
+    try {
+      const parsed = JSON.parse(jsonPart);
+      if (parsed?.name) {
+        toolCalls.push({ name: String(parsed.name), query: parsed.query ? String(parsed.query) : "" });
+      }
+    } catch {
+      // ignore parse error
+    }
+    strippedChunk = before + remaining;
+    tcIdx = strippedChunk.indexOf(TOOL_CALL_SENTINEL);
+  }
+
+  // Find whichever end-of-stream sentinel comes first.
   const candidates = [
-    chunk.indexOf(CITATIONS_SENTINEL),
-    chunk.indexOf(MESSAGE_ID_SENTINEL),
-    chunk.indexOf(METRICS_SENTINEL),
+    strippedChunk.indexOf(CITATIONS_SENTINEL),
+    strippedChunk.indexOf(MESSAGE_ID_SENTINEL),
+    strippedChunk.indexOf(METRICS_SENTINEL),
+    strippedChunk.indexOf(TRACE_URL_SENTINEL),
   ].filter((idx) => idx !== -1);
   const firstIdx = candidates.length > 0 ? Math.min(...candidates) : -1;
 
   if (firstIdx === -1) {
-    return { text: chunk, citations: [], messageId: null, metrics: null };
+    return { text: strippedChunk, citations: [], messageId: null, metrics: null, toolCalls, traceUrl: null };
   }
 
-  const text = chunk.slice(0, firstIdx);
-  const tail = chunk.slice(firstIdx);
+  const text = strippedChunk.slice(0, firstIdx);
+  const tail = strippedChunk.slice(firstIdx);
 
   let citations: ConversationMessageCitation[] = [];
   let messageId: string | null = null;
   let metrics: ConversationMessageMetrics | null = null;
+  let traceUrl: string | null = null;
 
   const citSentinelIdx = tail.indexOf(CITATIONS_SENTINEL);
   if (citSentinelIdx !== -1) {
@@ -174,5 +204,12 @@ export const splitInlineCitations = (
     }
   }
 
-  return { text, citations, messageId, metrics };
+  const traceUrlSentinelIdx = tail.indexOf(TRACE_URL_SENTINEL);
+  if (traceUrlSentinelIdx !== -1) {
+    const afterTrace = tail.slice(traceUrlSentinelIdx + TRACE_URL_SENTINEL.length);
+    const nextSentinel = afterTrace.indexOf("\x00");
+    traceUrl = (nextSentinel === -1 ? afterTrace : afterTrace.slice(0, nextSentinel)).trim() || null;
+  }
+
+  return { text, citations, messageId, metrics, toolCalls, traceUrl };
 };

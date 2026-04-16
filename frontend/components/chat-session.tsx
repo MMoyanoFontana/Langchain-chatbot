@@ -52,7 +52,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { splitInlineCitations } from "@/lib/chat-citations";
 import { toBackendChatAttachment } from "@/lib/chat-attachments";
-import { BotIcon, CheckCircle2Icon, CheckIcon, CopyIcon, FileTextIcon, Maximize2Icon, RefreshCwIcon, ServerIcon, Settings2Icon } from "lucide-react";
+import { BotIcon, CheckCircle2Icon, CheckIcon, CopyIcon, ExternalLinkIcon, FileTextIcon, Maximize2Icon, RefreshCwIcon, ServerIcon, Settings2Icon } from "lucide-react";
 import { useRouter } from "next/navigation";
 import type {
   BackendProviderCode,
@@ -529,6 +529,12 @@ const AssistantBranchBody = ({ message }: { message: ConversationMessage }) => {
             </Shimmer>
           </div>
         ) : null}
+        {message.activeToolCall ? (
+          <div className="text-muted-foreground mb-3 flex items-center gap-2 text-sm">
+            <span className="bg-current size-2 animate-pulse rounded-full" />
+            <Shimmer duration={1.2}>Searching documents…</Shimmer>
+          </div>
+        ) : null}
         {metaText ? (
           <div className="text-muted-foreground mb-1 text-xs">
             {metaText}
@@ -541,6 +547,17 @@ const AssistantBranchBody = ({ message }: { message: ConversationMessage }) => {
           <MessageCitations citations={message.citations ?? []} />
         ) : null}
         <MessageMetrics metrics={message.metrics} />
+        {message.traceUrl ? (
+          <a
+            href={message.traceUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-muted-foreground hover:text-foreground mt-1 inline-flex items-center gap-1 text-xs transition-colors"
+          >
+            <ExternalLinkIcon className="size-3" />
+            View trace
+          </a>
+        ) : null}
       </MessageContent>
     </div>
   );
@@ -815,13 +832,14 @@ const ChatSession = ({ initialMessages, initialThreadId, initialSystemPrompt }: 
         const decoder = new TextDecoder();
         let assistantContent = "";
         let hasReceivedFirstChunk = false;
+        let activeToolCallSet = false;
 
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
 
           const raw = decoder.decode(value, { stream: true });
-          const { text, citations, messageId, metrics } = splitInlineCitations(raw);
+          const { text, citations, messageId, metrics, toolCalls, traceUrl } = splitInlineCitations(raw);
           assistantContent += text;
 
           if (citations.length > 0) {
@@ -833,6 +851,15 @@ const ChatSession = ({ initialMessages, initialThreadId, initialSystemPrompt }: 
           if (metrics) {
             updateAssistantMessageMeta(assistantMessageIndex, { metrics });
           }
+          if (traceUrl) {
+            updateAssistantMessageMeta(assistantMessageIndex, { traceUrl });
+          }
+          if (toolCalls.length > 0) {
+            activeToolCallSet = true;
+            updateAssistantMessageMeta(assistantMessageIndex, {
+              activeToolCall: toolCalls[toolCalls.length - 1],
+            });
+          }
           if (!hasReceivedFirstChunk) {
             hasReceivedFirstChunk = true;
             updateAssistantMessageMeta(assistantMessageIndex, {
@@ -840,6 +867,10 @@ const ChatSession = ({ initialMessages, initialThreadId, initialSystemPrompt }: 
             });
           }
           if (text) {
+            if (activeToolCallSet) {
+              activeToolCallSet = false;
+              updateAssistantMessageMeta(assistantMessageIndex, { activeToolCall: null });
+            }
             updateAssistantMessage(assistantMessageIndex, assistantContent);
           }
         }

@@ -28,7 +28,7 @@ from app.graphs._nodes import (
     _persist_user_message,
     _require_int,
     _require_str,
-    _retrieve_context,
+    _build_context_addendum,
     _route_after_step,
     _serialize_attachments,
     _validate_request,
@@ -46,7 +46,7 @@ def _build_chat_graph():
     graph.add_node("persist_user_message", _persist_user_message)
     graph.add_node("ingest_attachments", _ingest_attachments)
     graph.add_node("load_history", _load_history)
-    graph.add_node("retrieve_context", _retrieve_context)
+    graph.add_node("build_context_addendum", _build_context_addendum)
     graph.add_node("error", _error_node)
 
     graph.add_edge(START, "validate_request")
@@ -72,8 +72,8 @@ def _build_chat_graph():
         {"continue": "ingest_attachments", "error": "error"},
     )
     graph.add_edge("ingest_attachments", "load_history")
-    graph.add_edge("load_history", "retrieve_context")
-    graph.add_edge("retrieve_context", END)
+    graph.add_edge("load_history", "build_context_addendum")
+    graph.add_edge("build_context_addendum", END)
     graph.add_edge("error", END)
 
     return graph.compile()
