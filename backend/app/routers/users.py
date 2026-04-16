@@ -16,6 +16,7 @@ from app.schemas import (
     ChatThreadSummaryRead,
     ChatThreadSystemPromptUpdate,
     ChatThreadUpdate,
+    MessageSearchResult,
     ProviderApiKeyRead,
     ProviderApiKeyUpdate,
     ProviderApiKeyUpsert,
@@ -749,3 +750,50 @@ def delete_current_user_memory(
 ) -> Response:
     delete_user_memory(user.id, key, db)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+def search_user_messages(user_id: str, q: str, db: Session) -> list[MessageSearchResult]:
+    q = q.strip()
+    if not q:
+        return []
+
+    pattern = f"%{q}%"
+    rows = db.execute(
+        select(
+            ChatMessage.id.label("message_id"),
+            ChatMessage.thread_id,
+            ChatThread.title.label("thread_title"),
+            ChatMessage.role,
+            ChatMessage.content,
+            ChatMessage.created_at,
+        )
+        .join(ChatThread, ChatThread.id == ChatMessage.thread_id)
+        .where(
+            ChatThread.user_id == user_id,
+            ChatMessage.role.in_([MessageRole.USER, MessageRole.ASSISTANT]),
+            ChatMessage.content.ilike(pattern),
+        )
+        .order_by(ChatMessage.created_at.desc())
+        .limit(50)
+    ).all()
+
+    return [
+        MessageSearchResult(
+            message_id=row.message_id,
+            thread_id=row.thread_id,
+            thread_title=row.thread_title,
+            role=row.role,
+            content_snippet=row.content[:200],
+            created_at=row.created_at,
+        )
+        for row in rows
+    ]
+
+
+@router.get("/me/messages/search", response_model=list[MessageSearchResult])
+def search_current_user_messages(
+    q: str = Query(default=""),
+    user: User = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> list[MessageSearchResult]:
+    return search_user_messages(user.id, q, db)

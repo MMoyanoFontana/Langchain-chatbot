@@ -30,6 +30,7 @@ import {
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { DeleteThreadDialog } from "@/components/delete-thread-dialog"
+import { MessageSearchDialog } from "@/components/message-search-dialog"
 import { NavUser } from "@/components/nav-user"
 import { RenameThreadDialog } from "@/components/rename-thread-dialog"
 import { SettingsDialog } from "@/components/settings-dialog"
@@ -66,6 +67,7 @@ type AppSidebarProps = {
 export function AppSidebar({ initialUser }: AppSidebarProps) {
     const router = useRouter()
     const [settingsOpen, setSettingsOpen] = useState(false)
+    const [searchOpen, setSearchOpen] = useState(false)
     const [isLoggingOut, setIsLoggingOut] = useState(false)
     const pathname = usePathname()
 
@@ -165,10 +167,10 @@ export function AppSidebar({ initialUser }: AppSidebarProps) {
                                     </SidebarMenuButton >
                                 </SidebarMenuItem>
                                 <SidebarMenuItem key="search-chat">
-                                    <SidebarMenuButton render={<Link href="/" />}>
+                                    <SidebarMenuButton onClick={() => setSearchOpen(true)}>
                                         <SearchIcon />
                                         <span>Search</span>
-                                    </SidebarMenuButton >
+                                    </SidebarMenuButton>
                                 </SidebarMenuItem>
                             </SidebarMenu>
                         </SidebarGroupContent>
@@ -324,6 +326,7 @@ export function AppSidebar({ initialUser }: AppSidebarProps) {
                 </SidebarFooter>
             </Sidebar>
             <SettingsDialog open={settingsOpen} onOpenChange={handleSettingsOpenChange} />
+            <MessageSearchDialog open={searchOpen} onOpenChange={setSearchOpen} />
             <RenameThreadDialog
                 open={renameDialogOpen}
                 value={renameValue}

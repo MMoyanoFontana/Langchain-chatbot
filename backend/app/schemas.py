@@ -245,3 +245,12 @@ class UserMemoryRead(BaseModel):
 
 class UserMemoryUpdate(BaseModel):
     value: str = Field(min_length=1, max_length=200)
+
+
+class MessageSearchResult(BaseModel):
+    message_id: str
+    thread_id: str
+    thread_title: str | None
+    role: MessageRole
+    content_snippet: str
+    created_at: datetime
