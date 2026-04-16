@@ -173,15 +173,14 @@ async def _extract_and_save_user_facts(
         return
 
     prompt = (
-        "Extract ONLY stable biographical or long-term facts about the user "
-        "from this message. Allowed categories: name, profession/role, "
-        "location, languages spoken, technical expertise, long-term goals.\n\n"
+        "Extract stable biographical or long-term facts about the user from this message."
+        "If user includes the word Remember or similar, that is a strong signal to extract a fact" 
+        "but also extract from other declarative statements about the user's identity, background, role, expertise, etc.\n\n"
         "DO NOT extract:\n"
         "- Format preferences (markdown, tables, bullet points, code style)\n"
-        "- One-off requests or commands (\"respond like X\", \"use Y format\")\n"
+        '- One-off requests or commands ("respond like X", "use Y format")\n'
         "- Tone/style preferences for a single conversation\n"
-        "- Topics of interest for a single conversation\n"
-        "- Anything that is not a permanent personal attribute\n\n"
+        "- Anything that is clearly a temporary or context-specific request\n\n"
         "Return JSON only — no prose, no markdown fences.\n"
         'Format: {"facts": [{"key": "snake_case_key", "value": "fact value"}]}\n'
         'If nothing qualifies, return: {"facts": []}\n\n'
