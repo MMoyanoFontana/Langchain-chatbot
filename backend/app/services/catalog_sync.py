@@ -70,7 +70,7 @@ def _fetch_openai_models(api_key: str) -> list[_FetchedModel]:
         model_id: str = item.get("id", "")
         if not _is_openai_chat_model(model_id):
             continue
-        display_name = model_id.replace("-", " ").replace(".", " ").title()
+        display_name = model_id.replace("-", " ").title()
         models.append(_FetchedModel(model_id=model_id, display_name=display_name))
     return models
 
