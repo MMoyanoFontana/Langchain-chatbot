@@ -24,6 +24,7 @@ export type SubmitMessagePayload = {
 
 type ComposerHandlers = {
   onSubmitMessage: (payload: SubmitMessagePayload) => void | Promise<void>;
+  onStop?: () => void;
   preferredModelId: string | null;
   forceModelId?: string | null;
 };

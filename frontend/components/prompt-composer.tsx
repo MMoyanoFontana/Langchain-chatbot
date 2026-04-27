@@ -191,6 +191,7 @@ interface PromptComposerProps {
     preferredModelId?: string | null;
     forceModelId?: string | null;
     onSubmitMessage?: (payload: SubmitMessagePayload) => void | Promise<void>;
+    onStop?: () => void;
 }
 
 const normalizeModelId = (value: string | null | undefined): string | null => {
@@ -203,6 +204,7 @@ const PromptComposer = ({
     preferredModelId,
     forceModelId,
     onSubmitMessage,
+    onStop,
 }: PromptComposerProps) => {
     const { user } = useCurrentUser();
     const normalizedPreferredModelId = normalizeModelId(preferredModelId);
@@ -601,6 +603,7 @@ const PromptComposer = ({
                                 <PromptInputSubmit
                                     disabled={modelsLoading || !canSubmit}
                                     status={status}
+                                    onStop={onStop}
                                 />
                             </TooltipTrigger>
                             {!modelsLoading && !canSubmit && (

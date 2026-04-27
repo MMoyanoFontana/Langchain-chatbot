@@ -12,6 +12,7 @@ function ComposerSlot() {
         preferredModelId={handlers?.preferredModelId ?? null}
         forceModelId={handlers?.forceModelId ?? null}
         onSubmitMessage={handlers?.onSubmitMessage}
+        onStop={handlers?.onStop}
       />
     </div>
   );

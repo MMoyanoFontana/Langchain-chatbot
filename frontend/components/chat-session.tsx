@@ -780,6 +780,7 @@ const ChatSession = ({ initialMessages, initialThreadId, initialSystemPrompt }: 
   const [setupSystemPromptDraft, setSetupSystemPromptDraft] = useState("");
   // Whether the first message has been sent (so we stop attaching the pending config)
   const firstMessageSentRef = useRef(false);
+  const activeAbortControllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     if (initialMessages) {
@@ -825,11 +826,15 @@ const ChatSession = ({ initialMessages, initialThreadId, initialSystemPrompt }: 
       assistantMessageIndex: number,
       requestBody: Record<string, unknown>
     ): Promise<{ userMessageId: string | null; threadId: string | null }> => {
+      const abortController = new AbortController();
+      activeAbortControllerRef.current = abortController;
+      let assistantContentAccumulated = "";
       try {
         const response = await fetch("/api/chat", {
           body: JSON.stringify(requestBody),
           headers: { "Content-Type": "application/json" },
           method: "POST",
+          signal: abortController.signal,
         });
 
         if (!response.ok) {
@@ -847,7 +852,6 @@ const ChatSession = ({ initialMessages, initialThreadId, initialSystemPrompt }: 
 
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
-        let assistantContent = "";
         let reasoningContent = "";
         let hasReceivedFirstChunk = false;
         let activeToolCallSet = false;
@@ -860,7 +864,7 @@ const ChatSession = ({ initialMessages, initialThreadId, initialSystemPrompt }: 
           const raw = decoder.decode(value, { stream: true });
           const { text, citations, messageId, metrics, toolCalls, traceUrl, reasoningDeltas } =
             splitInlineCitations(raw);
-          assistantContent += text;
+          assistantContentAccumulated += text;
 
           if (citations.length > 0) {
             updateAssistantMessageMeta(assistantMessageIndex, { citations });
@@ -909,17 +913,17 @@ const ChatSession = ({ initialMessages, initialThreadId, initialSystemPrompt }: 
               activeToolCallSet = false;
               updateAssistantMessageMeta(assistantMessageIndex, { activeToolCall: null });
             }
-            updateAssistantMessage(assistantMessageIndex, assistantContent);
+            updateAssistantMessage(assistantMessageIndex, assistantContentAccumulated);
           }
         }
 
-        assistantContent += decoder.decode();
+        assistantContentAccumulated += decoder.decode();
         updateAssistantMessageMeta(assistantMessageIndex, {
           reasoningStreaming: false,
         });
         updateAssistantMessage(
           assistantMessageIndex,
-          assistantContent.trim() ? assistantContent : "(No response)"
+          assistantContentAccumulated.trim() ? assistantContentAccumulated : "(No response)"
         );
 
         return {
@@ -927,14 +931,23 @@ const ChatSession = ({ initialMessages, initialThreadId, initialSystemPrompt }: 
           threadId: resolvedThreadId,
         };
       } catch (error) {
+        updateAssistantMessageMeta(assistantMessageIndex, { reasoningStreaming: false });
+        if (error instanceof Error && error.name === "AbortError") {
+          const partial = assistantContentAccumulated.trim();
+          updateAssistantMessage(
+            assistantMessageIndex,
+            partial ? `${partial}\n\n*(Generation stopped)*` : "*(Generation stopped)*"
+          );
+          return { userMessageId: null, threadId: null };
+        }
         const errorMessage =
           error instanceof Error ? error.message : "Unexpected chat error.";
-
-        updateAssistantMessageMeta(assistantMessageIndex, {
-          reasoningStreaming: false,
-        });
         updateAssistantMessage(assistantMessageIndex, `Error: ${errorMessage}`);
         return { userMessageId: null, threadId: null };
+      } finally {
+        if (activeAbortControllerRef.current === abortController) {
+          activeAbortControllerRef.current = null;
+        }
       }
     },
     [updateAssistantMessage, updateAssistantMessageMeta]
@@ -1188,10 +1201,14 @@ const ChatSession = ({ initialMessages, initialThreadId, initialSystemPrompt }: 
 
   const { register, unregister } = useChatComposer();
 
+  const handleStop = useCallback(() => {
+    activeAbortControllerRef.current?.abort();
+  }, []);
+
   useEffect(() => {
-    register({ onSubmitMessage: handleSubmitMessage, preferredModelId, forceModelId: winnerModelId });
+    register({ onSubmitMessage: handleSubmitMessage, onStop: handleStop, preferredModelId, forceModelId: winnerModelId });
     return () => unregister();
-  }, [register, unregister, handleSubmitMessage, preferredModelId, winnerModelId]);
+  }, [register, unregister, handleSubmitMessage, handleStop, preferredModelId, winnerModelId]);
 
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
