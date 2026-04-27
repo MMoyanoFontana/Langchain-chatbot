@@ -37,6 +37,11 @@ import {
   MessageResponse,
   MessageToolbar,
 } from "@/components/ai-elements/message";
+import {
+  Reasoning,
+  ReasoningContent,
+  ReasoningTrigger,
+} from "@/components/ai-elements/reasoning";
 import { Shimmer } from "@/components/ai-elements/shimmer";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -507,6 +512,12 @@ const AssistantBranchBody = ({ message }: { message: ConversationMessage }) => {
   const metaText = message.modelName ?? null;
   const trimmedContent = message.content.trim();
   const hasCitations = Boolean(message.citations?.length);
+  const reasoningText = message.reasoning?.trim() ?? "";
+  const hasReasoning = Boolean(reasoningText);
+  // Keep the shimmer placeholder only while we have neither visible text nor
+  // streamed reasoning — once either arrives, the model-specific UI takes over.
+  const showPendingShimmer =
+    Boolean(message.reasoningStreaming) && !hasReasoning && !trimmedContent;
 
   return (
     <div className="flex items-start gap-2.5">
@@ -521,7 +532,13 @@ const AssistantBranchBody = ({ message }: { message: ConversationMessage }) => {
         )}
       </div>
       <MessageContent>
-        {message.reasoningStreaming ? (
+        {hasReasoning ? (
+          <Reasoning isStreaming={Boolean(message.reasoningStreaming)}>
+            <ReasoningTrigger />
+            <ReasoningContent>{reasoningText}</ReasoningContent>
+          </Reasoning>
+        ) : null}
+        {showPendingShimmer ? (
           <div className="text-muted-foreground mb-3 flex items-center gap-2 text-sm">
             <span className="bg-current size-2 animate-pulse rounded-full" />
             <Shimmer duration={1.2}>
@@ -831,15 +848,18 @@ const ChatSession = ({ initialMessages, initialThreadId, initialSystemPrompt }: 
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let assistantContent = "";
+        let reasoningContent = "";
         let hasReceivedFirstChunk = false;
         let activeToolCallSet = false;
+        let reasoningStreaming = false;
 
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
 
           const raw = decoder.decode(value, { stream: true });
-          const { text, citations, messageId, metrics, toolCalls, traceUrl } = splitInlineCitations(raw);
+          const { text, citations, messageId, metrics, toolCalls, traceUrl, reasoningDeltas } =
+            splitInlineCitations(raw);
           assistantContent += text;
 
           if (citations.length > 0) {
@@ -860,13 +880,31 @@ const ChatSession = ({ initialMessages, initialThreadId, initialSystemPrompt }: 
               activeToolCall: toolCalls[toolCalls.length - 1],
             });
           }
-          if (!hasReceivedFirstChunk) {
-            hasReceivedFirstChunk = true;
+          if (reasoningDeltas.length > 0) {
+            reasoningContent += reasoningDeltas.join("");
+            reasoningStreaming = true;
             updateAssistantMessageMeta(assistantMessageIndex, {
-              reasoningStreaming: false,
+              reasoning: reasoningContent,
+              reasoningStreaming: true,
             });
           }
+          if (!hasReceivedFirstChunk) {
+            hasReceivedFirstChunk = true;
+            // Keep the placeholder shimmer if we are only seeing reasoning so
+            // far; drop it as soon as any visible text arrives.
+            if (text) {
+              updateAssistantMessageMeta(assistantMessageIndex, {
+                reasoningStreaming: false,
+              });
+            }
+          }
           if (text) {
+            if (reasoningStreaming) {
+              reasoningStreaming = false;
+              updateAssistantMessageMeta(assistantMessageIndex, {
+                reasoningStreaming: false,
+              });
+            }
             if (activeToolCallSet) {
               activeToolCallSet = false;
               updateAssistantMessageMeta(assistantMessageIndex, { activeToolCall: null });

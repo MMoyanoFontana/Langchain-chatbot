@@ -20,6 +20,7 @@ type ThreadMessageResponse = {
   id?: string;
   role: string;
   content: string;
+  reasoning_content?: string | null;
   attachments?: BackendChatAttachment[] | null;
   citations?: BackendChatCitation[] | null;
   provider_code?: string | null;
@@ -98,6 +99,7 @@ export default async function ChatPage({ params }: ChatPageProps) {
         message.citations?.map(toConversationCitation).filter(isDefined) || undefined,
       role: toConversationRole(message.role),
       content: message.content,
+      reasoning: message.reasoning_content ?? null,
       providerCode: toProviderCode(message.provider_code),
       modelName: message.model_name ?? null,
       parentMessageId: message.parent_message_id ?? null,

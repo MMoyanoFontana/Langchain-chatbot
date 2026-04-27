@@ -81,6 +81,7 @@ export const MESSAGE_ID_SENTINEL = "\x00MESSAGE_ID:";
 export const METRICS_SENTINEL = "\x00METRICS:";
 export const TOOL_CALL_SENTINEL = "\x00TOOL_CALL:";
 export const TRACE_URL_SENTINEL = "\x00TRACE_URL:";
+export const REASONING_SENTINEL = "\x00REASONING:";
 
 type BackendMetricsPayload = {
   prompt_tokens?: number | null;
@@ -122,10 +123,12 @@ export const splitInlineCitations = (
   metrics: ConversationMessageMetrics | null;
   toolCalls: Array<{ name: string; query: string }>;
   traceUrl: string | null;
+  reasoningDeltas: string[];
 } => {
   // Strip mid-stream TOOL_CALL events before applying end-of-stream sentinel logic.
   let strippedChunk = chunk;
   const toolCalls: Array<{ name: string; query: string }> = [];
+  const reasoningDeltas: string[] = [];
 
   let tcIdx = strippedChunk.indexOf(TOOL_CALL_SENTINEL);
   while (tcIdx !== -1) {
@@ -146,6 +149,27 @@ export const splitInlineCitations = (
     tcIdx = strippedChunk.indexOf(TOOL_CALL_SENTINEL);
   }
 
+  // Strip mid-stream REASONING deltas. Payload is a JSON-encoded string so
+  // the delta itself can safely contain any character (including \x00).
+  let rIdx = strippedChunk.indexOf(REASONING_SENTINEL);
+  while (rIdx !== -1) {
+    const before = strippedChunk.slice(0, rIdx);
+    const after = strippedChunk.slice(rIdx + REASONING_SENTINEL.length);
+    const nextSentinel = after.indexOf("\x00");
+    const jsonPart = nextSentinel === -1 ? after : after.slice(0, nextSentinel);
+    const remaining = nextSentinel === -1 ? "" : after.slice(nextSentinel);
+    try {
+      const parsed = JSON.parse(jsonPart);
+      if (typeof parsed === "string" && parsed.length > 0) {
+        reasoningDeltas.push(parsed);
+      }
+    } catch {
+      // ignore parse error
+    }
+    strippedChunk = before + remaining;
+    rIdx = strippedChunk.indexOf(REASONING_SENTINEL);
+  }
+
   // Find whichever end-of-stream sentinel comes first.
   const candidates = [
     strippedChunk.indexOf(CITATIONS_SENTINEL),
@@ -156,7 +180,15 @@ export const splitInlineCitations = (
   const firstIdx = candidates.length > 0 ? Math.min(...candidates) : -1;
 
   if (firstIdx === -1) {
-    return { text: strippedChunk, citations: [], messageId: null, metrics: null, toolCalls, traceUrl: null };
+    return {
+      text: strippedChunk,
+      citations: [],
+      messageId: null,
+      metrics: null,
+      toolCalls,
+      traceUrl: null,
+      reasoningDeltas,
+    };
   }
 
   const text = strippedChunk.slice(0, firstIdx);
@@ -211,5 +243,5 @@ export const splitInlineCitations = (
     traceUrl = (nextSentinel === -1 ? afterTrace : afterTrace.slice(0, nextSentinel)).trim() || null;
   }
 
-  return { text, citations, messageId, metrics, toolCalls, traceUrl };
+  return { text, citations, messageId, metrics, toolCalls, traceUrl, reasoningDeltas };
 };

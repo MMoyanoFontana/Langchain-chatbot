@@ -16,6 +16,7 @@ export interface ChatCatalogModelResponse {
   model_id: string;
   display_name: string;
   is_active: boolean;
+  supports_reasoning?: boolean;
   provider: ChatCatalogProvider;
 }
 
@@ -25,6 +26,7 @@ export interface ChatModel {
   providerLabel: string;
   providerSlug: string;
   providerCode: BackendProviderCode;
+  supportsReasoning: boolean;
 }
 
 interface ProviderApiKeyResponse {
@@ -58,6 +60,7 @@ export const mapCatalogModel = (entry: ChatCatalogModelResponse): ChatModel => (
   providerLabel: entry.provider.display_name,
   providerSlug: normalizeProviderSlug(entry.provider.code),
   providerCode: normalizeProviderCode(entry.provider.code),
+  supportsReasoning: Boolean(entry.supports_reasoning),
 });
 
 export interface UseChatModelsResult {
