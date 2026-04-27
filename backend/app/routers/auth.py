@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 from fastapi import APIRouter, Depends, Query, Request, Response, status
 from sqlalchemy.orm import Session
 
@@ -8,18 +10,18 @@ from app.models import AuthProvider, User
 from app.schemas import (
     AuthProviderRead,
     AuthSessionRead,
-    EmailLoginRequest,
-    EmailRegisterRequest,
     OAuthAuthorizeRead,
     OAuthExchangeRequest,
     UserRead,
+    UsernameLoginRequest,
+    UsernameRegisterRequest,
 )
 from app.services.auth import (
     build_oauth_authorize_url,
     exchange_oauth_code,
     list_oauth_providers,
-    login_user_with_password,
-    register_user_with_password,
+    login_user_with_username,
+    register_user_with_username,
     revoke_session_token,
 )
 from app.services.current_user import get_session_token_from_request, require_current_user
@@ -45,24 +47,17 @@ def get_auth_providers() -> list[dict[str, str | bool]]:
     return list_oauth_providers()
 
 
-@router.post("/email/register", response_model=AuthSessionRead, status_code=status.HTTP_201_CREATED)
-def register_with_email(payload: EmailRegisterRequest, db: Session = Depends(get_db)) -> AuthSessionRead:
-    user, session_token = register_user_with_password(
-        db,
-        email=payload.email,
-        password=payload.password,
-        full_name=payload.full_name,
+@router.post("/register", response_model=AuthSessionRead, status_code=status.HTTP_201_CREATED)
+def register(payload: UsernameRegisterRequest, db: Session = Depends(get_db)) -> AuthSessionRead:
+    user, session_token = register_user_with_username(
+        db, username=payload.username, password=payload.password, full_name=payload.full_name
     )
     return _build_auth_response(user=user, session_token=session_token)
 
 
-@router.post("/email/login", response_model=AuthSessionRead)
-def login_with_email(payload: EmailLoginRequest, db: Session = Depends(get_db)) -> AuthSessionRead:
-    user, session_token = login_user_with_password(
-        db,
-        email=payload.email,
-        password=payload.password,
-    )
+@router.post("/login", response_model=AuthSessionRead)
+def login(payload: UsernameLoginRequest, db: Session = Depends(get_db)) -> AuthSessionRead:
+    user, session_token = login_user_with_username(db, username=payload.username, password=payload.password)
     return _build_auth_response(user=user, session_token=session_token)
 
 
@@ -101,7 +96,7 @@ def get_oauth_authorize_url(
         nonce,
         httponly=True,
         samesite="strict",
-        secure=True,
+        secure=os.getenv("ENVIRONMENT", "development").lower() == "production",
         max_age=_OAUTH_NONCE_MAX_AGE,
     )
     return OAuthAuthorizeRead(authorize_url=authorize_url)

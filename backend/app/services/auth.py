@@ -118,19 +118,11 @@ def _normalize_name(full_name: str | None) -> str | None:
     return normalized or None
 
 
-def _base64url_encode(raw: bytes) -> str:
-    return base64.urlsafe_b64encode(raw).decode("utf-8").rstrip("=")
-
-
-def _base64url_decode(raw: str) -> bytes:
-    padding = "=" * (-len(raw) % 4)
-    return base64.urlsafe_b64decode(f"{raw}{padding}".encode("utf-8"))
+def _normalize_username(username: str) -> str:
+    return username.strip().lower()
 
 
 def _required_scrypt_maxmem(n: int, r: int, p: int) -> int:
-    # OpenSSL applies a 32 MiB default limit when maxmem is omitted. Our
-    # chosen parameters need more headroom, so compute a floor that works
-    # across platforms while still allowing an env override to raise it.
     return 128 * r * (n + p + 2)
 
 
@@ -157,7 +149,6 @@ def _hash_password_value(
 def hash_password(password: str) -> str:
     if len(password) < 8:
         raise ValueError("Password must be at least 8 characters long.")
-
     salt = os.urandom(16)
     derived_key = _hash_password_value(password, salt)
     return (
@@ -171,28 +162,25 @@ def verify_password(password: str, password_hash: str) -> bool:
         algorithm, raw_n, raw_r, raw_p, encoded_salt, encoded_hash = password_hash.split("$", 5)
     except ValueError:
         return False
-
     if algorithm != PASSWORD_HASH_NAME:
         return False
-
     try:
-        n = int(raw_n)
-        r = int(raw_r)
-        p = int(raw_p)
+        n, r, p = int(raw_n), int(raw_r), int(raw_p)
         salt = _base64url_decode(encoded_salt)
         expected_hash = _base64url_decode(encoded_hash)
     except (TypeError, ValueError):
         return False
-
-    derived_hash = _hash_password_value(
-        password,
-        salt,
-        n=n,
-        r=r,
-        p=p,
-        dklen=len(expected_hash),
-    )
+    derived_hash = _hash_password_value(password, salt, n=n, r=r, p=p, dklen=len(expected_hash))
     return hmac.compare_digest(derived_hash, expected_hash)
+
+
+def _base64url_encode(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).decode("utf-8").rstrip("=")
+
+
+def _base64url_decode(raw: str) -> bytes:
+    padding = "=" * (-len(raw) % 4)
+    return base64.urlsafe_b64decode(f"{raw}{padding}".encode("utf-8"))
 
 
 def _get_auth_secret() -> bytes:
@@ -293,63 +281,42 @@ def _placeholder_email(provider: AuthProvider, subject: str) -> str:
     return f"{provider.value}-{normalized_subject[:48]}@{PLACEHOLDER_EMAIL_DOMAIN}"
 
 
-def register_user_with_password(
+def register_user_with_username(
     db: Session,
     *,
-    email: str,
+    username: str,
     password: str,
     full_name: str | None,
 ) -> tuple[User, str]:
-    normalized_email = _normalize_email(email)
-    if not normalized_email:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Email cannot be blank.")
-
-    user = db.scalar(select(User).where(User.email == normalized_email))
-    if user is not None:
-        if not user.is_active:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="This account is disabled.",
-            )
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="An account with this email already exists.",
-        )
+    normalized_username = _normalize_username(username)
+    existing = db.scalar(select(User).where(User.username == normalized_username))
+    if existing is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Username is already taken.")
 
     password_hash = hash_password(password)
-    normalized_name = _normalize_name(full_name)
-    user = User(email=normalized_email, full_name=normalized_name, password_hash=password_hash)
+    user = User(
+        email=None,
+        username=normalized_username,
+        full_name=_normalize_name(full_name),
+        password_hash=password_hash,
+    )
     db.add(user)
     try:
         db.commit()
     except IntegrityError as exc:
         db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="An account with this email already exists.",
-        ) from exc
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Username is already taken.") from exc
     db.refresh(user)
-
     return user, create_user_session(db, user)
 
 
-def login_user_with_password(db: Session, *, email: str, password: str) -> tuple[User, str]:
-    normalized_email = _normalize_email(email)
-    if not normalized_email:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Email cannot be blank.")
-
-    user = db.scalar(select(User).where(User.email == normalized_email))
+def login_user_with_username(db: Session, *, username: str, password: str) -> tuple[User, str]:
+    normalized_username = _normalize_username(username)
+    user = db.scalar(select(User).where(User.username == normalized_username))
     if user is None or user.password_hash is None or not verify_password(password, user.password_hash):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password.",
-        )
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect username or password.")
     if not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="This account is disabled.",
-        )
-
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This account is disabled.")
     return user, create_user_session(db, user)
 
 
@@ -583,8 +550,14 @@ async def _request_oauth_user_info(
         profile_response = await client.get("https://api.github.com/user", headers=user_headers)
         profile_payload = await _parse_oauth_response(profile_response, fallback="GitHub profile request failed.")
         emails_response = await client.get("https://api.github.com/user/emails", headers=user_headers)
-        emails_payload = await _parse_oauth_response(emails_response, fallback="GitHub email request failed.")
-        email = _select_github_email(emails_payload)
+        email: str | None = None
+        if emails_response.is_success:
+            try:
+                email = _select_github_email(emails_response.json())
+            except Exception:
+                pass
+        if email is None:
+            email = _normalize_email(profile_payload.get("email"))
         subject = str(profile_payload.get("id") or "").strip()
         return _build_oauth_user_info(
             subject=subject,

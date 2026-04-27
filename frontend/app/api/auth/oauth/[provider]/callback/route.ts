@@ -35,6 +35,8 @@ export async function GET(
     request.nextUrl.origin
   ).toString();
 
+  const nonce = request.cookies.get("oauth_nonce")?.value ?? "";
+
   try {
     const upstreamResponse = await backendFetchFromRoute(
       `/auth/oauth/${provider}/exchange`,
@@ -47,6 +49,7 @@ export async function GET(
         headers: {
           Accept: "application/json",
           "Content-Type": "application/json",
+          ...(nonce ? { Cookie: `oauth_nonce=${nonce}` } : {}),
         },
         method: "POST",
       }
@@ -69,6 +72,7 @@ export async function GET(
     const destination = normalizeInternalRedirect(payload.redirect_to);
     const response = NextResponse.redirect(new URL(destination, request.nextUrl.origin));
     setSessionCookie(response, payload.session_token);
+    response.cookies.set("oauth_nonce", "", { expires: new Date(0), path: "/" });
     return response;
   } catch {
     return redirectToLogin(request, "Unable to reach auth backend.");

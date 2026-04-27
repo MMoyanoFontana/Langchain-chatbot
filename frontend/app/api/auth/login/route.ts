@@ -7,61 +7,43 @@ import {
 } from "@/lib/backend-route";
 
 type LoginBody = {
-  email?: string;
+  username?: string;
   password?: string;
 };
 
 export async function POST(request: NextRequest) {
   let body: LoginBody;
-
   try {
     body = (await request.json()) as LoginBody;
   } catch {
     return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
   }
 
-  const email = body.email?.trim() ?? "";
+  const username = body.username?.trim() ?? "";
   const password = body.password ?? "";
-  if (!email || !password) {
-    return NextResponse.json(
-      { error: "Email and password are required." },
-      { status: 400 }
-    );
+  if (!username || !password) {
+    return NextResponse.json({ error: "Username and password are required." }, { status: 400 });
   }
 
   try {
-    const upstreamResponse = await backendFetchFromRoute("/auth/email/login", {
-      body: JSON.stringify({ email, password }),
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-      },
+    const upstream = await backendFetchFromRoute("/auth/login", {
+      body: JSON.stringify({ username, password }),
+      headers: { Accept: "application/json", "Content-Type": "application/json" },
       method: "POST",
     });
 
-    if (!upstreamResponse.ok) {
+    if (!upstream.ok) {
       return NextResponse.json(
-        {
-          error: await parseUpstreamError(
-            upstreamResponse,
-            "Unable to sign in."
-          ),
-        },
-        { status: upstreamResponse.status || 502 }
+        { error: await parseUpstreamError(upstream, "Unable to sign in.") },
+        { status: upstream.status || 502 }
       );
     }
 
-    const payload = (await upstreamResponse.json()) as {
-      session_token: string;
-      user: unknown;
-    };
+    const payload = (await upstream.json()) as { session_token: string; user: unknown };
     const response = NextResponse.json({ user: payload.user });
     setSessionCookie(response, payload.session_token);
     return response;
   } catch {
-    return NextResponse.json(
-      { error: "Unable to reach auth backend." },
-      { status: 502 }
-    );
+    return NextResponse.json({ error: "Unable to reach auth backend." }, { status: 502 });
   }
 }

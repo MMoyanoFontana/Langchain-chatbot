@@ -99,7 +99,8 @@ type StoredSettings = {
 }
 
 type CurrentUserResponse = {
-  email: string
+  email: string | null
+  username: string | null
   full_name: string | null
 }
 
@@ -259,6 +260,7 @@ export function SettingsDialog({
   const [activeTab, setActiveTab] = React.useState<SettingsTab>("profile")
   const [displayName, setDisplayName] = React.useState("")
   const [email, setEmail] = React.useState("")
+  const [isUsernameAccount, setIsUsernameAccount] = React.useState(false)
   const [language, setLanguage] = React.useState<Language>("en")
   const [providers, setProviders] = React.useState<ProviderConnection[]>([])
   const [providerDrafts, setProviderDrafts] = React.useState<Record<string, string>>({})
@@ -298,6 +300,7 @@ export function SettingsDialog({
         const user = (await userResponse.json()) as CurrentUserResponse
         setDisplayName(user.full_name?.trim() || "")
         setEmail(user.email ?? "")
+        setIsUsernameAccount(!!user.username)
       }
     } catch {
       // Ignore user bootstrap errors and keep defaults.
@@ -384,12 +387,8 @@ export function SettingsDialog({
     }
 
     const normalizedDisplayName = displayName.trim()
-    const payload: { fullName: string | null; email?: string } = {
+    const payload = {
       fullName: normalizedDisplayName.length > 0 ? normalizedDisplayName : null,
-    }
-    const trimmedEmail = email.trim()
-    if (trimmedEmail) {
-      payload.email = trimmedEmail
     }
 
     try {
@@ -401,7 +400,7 @@ export function SettingsDialog({
     } catch {
       // Keep local edits even if sync fails.
     }
-  }, [displayName, email, profileReady])
+  }, [displayName, profileReady])
 
   const addProviderKey = async (provider: ProviderOption) => {
     if (providerActionLoadingId) {
@@ -578,19 +577,14 @@ export function SettingsDialog({
               </label>
             </div>
 
-            <div className="border-b py-4">
-              <label className="grid gap-2">
-                <span className="text-sm">Email</span>
-                <Input
-                  type="email"
-                  value={email}
-                  onChange={(event) => setEmail(event.target.value)}
-                  onBlur={() => {
-                    void syncProfile()
-                  }}
-                />
-              </label>
-            </div>
+            {!isUsernameAccount && email && (
+              <div className="border-b py-4">
+                <div className="grid gap-2">
+                  <span className="text-sm">Email</span>
+                  <p className="text-sm text-muted-foreground">{email}</p>
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="py-4">

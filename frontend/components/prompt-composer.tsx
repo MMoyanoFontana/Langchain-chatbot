@@ -43,6 +43,7 @@ import type {
 } from "@/contexts/chat-composer-context";
 import { useChatModels, type ChatModel } from "@/lib/use-chat-models";
 import { CheckIcon, ChevronDown, ChevronRight, GitCompareIcon } from "lucide-react";
+import { useCurrentUser } from "@/contexts/user-context";
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
 
 type ComposerModel = ChatModel;
@@ -203,6 +204,7 @@ const PromptComposer = ({
     forceModelId,
     onSubmitMessage,
 }: PromptComposerProps) => {
+    const { user } = useCurrentUser();
     const normalizedPreferredModelId = normalizeModelId(preferredModelId);
     const {
         models: availableModels,
@@ -423,6 +425,19 @@ const PromptComposer = ({
         selectedModelData,
     ]);
 
+    if (!user) {
+        return (
+            <div className={`${className ?? "size-full"} flex items-center justify-center p-4`}>
+                <a
+                    href="/login"
+                    className="inline-flex h-9 items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow transition-colors hover:bg-primary/90"
+                >
+                    Sign in to start chatting
+                </a>
+            </div>
+        );
+    }
+
     return (
         <div className={className ?? "size-full"}>
                 <PromptInput
@@ -581,10 +596,19 @@ const PromptComposer = ({
                                 </ModelSelectorContent>
                             </ModelSelector>
                         </PromptInputTools>
-                        <PromptInputSubmit
-                            disabled={modelsLoading || !canSubmit}
-                            status={status}
-                        />
+                        <Tooltip>
+                            <TooltipTrigger render={<span />}>
+                                <PromptInputSubmit
+                                    disabled={modelsLoading || !canSubmit}
+                                    status={status}
+                                />
+                            </TooltipTrigger>
+                            {!modelsLoading && !canSubmit && (
+                                <TooltipContent>
+                                    Select a model to send a message
+                                </TooltipContent>
+                            )}
+                        </Tooltip>
                     </PromptInputFooter>
                 </PromptInput>
         </div>

@@ -10,19 +10,24 @@ export type SidebarUser = {
 
 type CurrentUserResponse = {
   email?: string | null;
+  username?: string | null;
   full_name: string | null;
   avatar_url?: string | null;
 };
 
+const PLACEHOLDER_EMAIL_DOMAIN = "users.local";
+
 const toSidebarUser = (payload: CurrentUserResponse): SidebarUser | null => {
+  const username = payload.username?.trim() ?? "";
   const email = payload.email?.trim() ?? "";
-  if (!email) {
-    return null;
-  }
+  const isPlaceholder = email.endsWith(`@${PLACEHOLDER_EMAIL_DOMAIN}`);
+  const subtitle = username ? `@${username}` : isPlaceholder ? "" : email;
+  const displayId = username || email;
+  if (!displayId) return null;
 
   return {
-    name: payload.full_name?.trim() || email,
-    email,
+    name: payload.full_name?.trim() || username || email,
+    email: subtitle,
     avatar: payload.avatar_url?.trim() || null,
   };
 };

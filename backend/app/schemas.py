@@ -19,7 +19,8 @@ class UserRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
-    email: str
+    email: str | None = None
+    username: str | None = None
     full_name: str | None
     avatar_url: str | None
     is_active: bool
@@ -27,15 +28,15 @@ class UserRead(BaseModel):
     updated_at: datetime
 
 
-class EmailRegisterRequest(BaseModel):
-    email: str = Field(min_length=3, max_length=320)
+class UsernameRegisterRequest(BaseModel):
+    username: str = Field(min_length=3, max_length=30, pattern=r"^[a-zA-Z0-9_-]+$")
     password: str = Field(min_length=8, max_length=128)
     full_name: str | None = Field(default=None, max_length=120)
 
 
-class EmailLoginRequest(BaseModel):
-    email: str = Field(min_length=3, max_length=320)
-    password: str = Field(min_length=8, max_length=128)
+class UsernameLoginRequest(BaseModel):
+    username: str = Field(min_length=1, max_length=30)
+    password: str = Field(min_length=1, max_length=128)
 
 
 class AuthProviderRead(BaseModel):

@@ -55,7 +55,8 @@ class User(Base):
     __tablename__ = "users"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    email: Mapped[str] = mapped_column(String(320), unique=True, index=True)
+    email: Mapped[str | None] = mapped_column(String(320), unique=True, index=True, nullable=True)
+    username: Mapped[str | None] = mapped_column(String(30), unique=True, index=True, nullable=True)
     full_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
     password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     avatar_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)

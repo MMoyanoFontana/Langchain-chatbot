@@ -21,8 +21,6 @@ projects:
         sync: false
       - key: OPENAI_API_KEY
         sync: false
-      - key: TAVILY_API_KEY
-        sync: false
       - key: LANGSMITH_PROJECT
         sync: false
       - key: LANGSMITH_API_KEY
@@ -36,6 +34,18 @@ projects:
       - key: PINECONE_API_KEY
         sync: false
       - key: API_KEY_ENCRYPTION_KEY
+        sync: false
+      - key: AUTH_SECRET
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: AUTH_GOOGLE_CLIENT_ID
+        sync: false
+      - key: AUTH_GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: AUTH_GITHUB_CLIENT_ID
+        sync: false
+      - key: AUTH_GITHUB_CLIENT_SECRET
         sync: false
       region: oregon
       buildCommand: uv sync
