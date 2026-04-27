@@ -43,6 +43,22 @@ alembic revision --autogenerate -m "describe the change"
 # Review the generated file, rename if needed (YYYYMMDD_NNNNNN_description.py), commit
 ```
 
+## Deployment (Render)
+
+The `Dockerfile` and `render.yaml` at the repo root define the deployment:
+
+1. **Set up Postgres:** Create a free Neon project, copy the connection string
+2. **Create Render service:** Connect this repo to Render (via GitHub)
+3. **Configure env vars** in Render dashboard:
+   - `DATABASE_URL` → Neon connection string
+   - `API_KEY_ENCRYPTION_KEY` → Generate with: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`
+   - `AUTH_SECRET` → Any strong random string
+   - `BACKEND_CORS_ORIGINS` → Your frontend URL (e.g., `https://chatbot.vercel.app`)
+   - Other optional vars: `PINECONE_*`, `LANGSMITH_*`, `GOOGLE_OAUTH_*`
+4. **Deploy:** Render auto-deploys on push to main (or manually via dashboard)
+
+Migrations run automatically on startup, so the schema is always current.
+
 ## Environment variables
 
 Reads `.env` in this directory (loaded by `python-dotenv`).
