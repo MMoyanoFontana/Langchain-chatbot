@@ -29,22 +29,20 @@ def upgrade() -> None:
     existing_cols = {col["name"] for col in inspector.get_columns("users")}
     existing_indexes = {idx["name"] for idx in inspector.get_indexes("users")}
 
-    # Drop orphaned indexes before batch so recreate doesn't try to rebuild them
     for idx in _ORPHAN_INDEXES:
         if idx in existing_indexes:
             op.drop_index(idx, table_name="users")
 
-    with op.batch_alter_table("users", recreate="always") as batch_op:
-        for col in _ORPHAN_COLS:
-            if col in existing_cols:
-                batch_op.drop_column(col)
-        if "username" not in existing_cols:
-            batch_op.add_column(sa.Column("username", sa.String(30), nullable=True))
-        if "password_hash" not in existing_cols:
-            batch_op.add_column(sa.Column("password_hash", sa.String(255), nullable=True))
+    for col in _ORPHAN_COLS:
+        if col in existing_cols:
+            op.drop_column("users", col)
+
+    if "username" not in existing_cols:
+        op.add_column("users", sa.Column("username", sa.String(30), nullable=True))
+    if "password_hash" not in existing_cols:
+        op.add_column("users", sa.Column("password_hash", sa.String(255), nullable=True))
 
 
 def downgrade() -> None:
-    with op.batch_alter_table("users", recreate="always") as batch_op:
-        batch_op.drop_column("username")
-        batch_op.drop_column("password_hash")
+    op.drop_column("users", "username")
+    op.drop_column("users", "password_hash")
