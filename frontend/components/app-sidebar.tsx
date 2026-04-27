@@ -40,12 +40,14 @@ import type { SidebarUser } from "@/hooks/use-sidebar-user"
 import { useSidebarUser } from "@/hooks/use-sidebar-user"
 import { MAX_THREAD_TITLE_LENGTH, useThreadActions } from "@/hooks/use-thread-actions"
 import { useThreadHistory } from "@/hooks/use-thread-history"
-import { BotIcon, ChevronRight, DownloadIcon, FileJsonIcon, FileTextIcon, MoreHorizontal, PencilIcon, PlusCircle, SearchIcon, Trash2 } from "lucide-react"
+import { BotIcon, ChevronRight, DownloadIcon, FileJsonIcon, FileTextIcon, MoreHorizontal, PencilIcon, PlusCircle, Route, SearchIcon, Trash2 } from "lucide-react"
 import {
     DropdownMenuSub,
     DropdownMenuSubContent,
     DropdownMenuSubTrigger,
 } from "@/components/ui/dropdown-menu"
+
+const APP_NAME = "LLM Compare"
 
 async function exportThread(threadId: string, title: string | null, format: "markdown" | "json") {
     const response = await fetch(`/api/threads/${threadId}/export?format=${format}`)
@@ -152,7 +154,24 @@ export function AppSidebar({ initialUser }: AppSidebarProps) {
     return (
         <>
             <Sidebar collapsible="icon">
-                <SidebarHeader className="h-12" />
+                <SidebarHeader>
+                    <SidebarMenu>
+                        <SidebarMenuItem>
+                            <SidebarMenuButton
+                                size="lg"
+                                tooltip={APP_NAME}
+                                className="hover:bg-transparent active:bg-transparent cursor-default"
+                            >
+                                <span className="flex aspect-square size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+                                    <Route className="size-4" />
+                                </span>
+                                <span className="truncate text-base font-semibold">
+                                    {APP_NAME}
+                                </span>
+                            </SidebarMenuButton>
+                        </SidebarMenuItem>
+                    </SidebarMenu>
+                </SidebarHeader>
                 <SidebarContent>
                     <SidebarGroup key="actions">
                         <SidebarGroupContent>

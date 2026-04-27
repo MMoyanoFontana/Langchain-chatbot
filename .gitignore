@@ -4,3 +4,6 @@
 # AI agent config files
 AGENTS.md
 .codex
+
+# IDE settings
+.vscode/

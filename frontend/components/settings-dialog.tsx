@@ -34,6 +34,11 @@ import {
   SelectTrigger,
 } from "@/components/ui/select"
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
+import {
   Sidebar,
   SidebarContent,
   SidebarGroup,
@@ -886,25 +891,40 @@ export function SettingsDialog({
               </p>
             </div>
 
-            <Select
-              value={language}
-              onValueChange={(value) => {
-                if (value === "en" || value === "es") {
-                  setLanguage(value)
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <span className="inline-block w-full sm:max-w-xs" tabIndex={0} />
                 }
-              }}
-            >
-              <SelectTrigger className="w-full sm:max-w-xs">
-                <span className="truncate">{selectedLanguageOption.label}</span>
-              </SelectTrigger>
-              <SelectContent align="start">
-                {LANGUAGE_OPTIONS.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>
-                    <span>{option.label}</span>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              >
+                <Select
+                  value={language}
+                  disabled
+                  onValueChange={(value) => {
+                    if (value === "en" || value === "es") {
+                      setLanguage(value)
+                    }
+                  }}
+                >
+                  <SelectTrigger
+                    className="w-full pointer-events-none"
+                    aria-disabled
+                  >
+                    <span className="truncate">{selectedLanguageOption.label}</span>
+                  </SelectTrigger>
+                  <SelectContent align="start">
+                    {LANGUAGE_OPTIONS.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        <span>{option.label}</span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </TooltipTrigger>
+              <TooltipContent side="right">
+                Additional languages coming soon
+              </TooltipContent>
+            </Tooltip>
           </div>
         </section>
       )
