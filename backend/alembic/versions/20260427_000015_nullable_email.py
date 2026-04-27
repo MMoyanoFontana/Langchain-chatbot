@@ -19,24 +19,18 @@ PLACEHOLDER_DOMAIN = "users.local"
 
 
 def upgrade() -> None:
-    # Make column nullable first, then clear placeholder emails
-    with op.batch_alter_table("users", recreate="always") as batch_op:
-        batch_op.alter_column("email", existing_type=sa.String(320), nullable=True)
-
-    bind = op.get_bind()
-    bind.execute(
-        sa.text("UPDATE users SET email = NULL WHERE email LIKE :pattern AND username IS NOT NULL"),
-        {"pattern": f"%@{PLACEHOLDER_DOMAIN}"},
+    op.alter_column("users", "email", existing_type=sa.String(320), nullable=True)
+    op.execute(
+        sa.text("UPDATE users SET email = NULL WHERE email LIKE :pattern AND username IS NOT NULL").bindparams(
+            pattern=f"%@{PLACEHOLDER_DOMAIN}"
+        )
     )
 
 
 def downgrade() -> None:
-    # Restore placeholder emails before making column NOT NULL again
-    bind = op.get_bind()
-    bind.execute(
-        sa.text("UPDATE users SET email = username || :suffix WHERE email IS NULL AND username IS NOT NULL"),
-        {"suffix": f"@{PLACEHOLDER_DOMAIN}"},
+    op.execute(
+        sa.text("UPDATE users SET email = username || :suffix WHERE email IS NULL AND username IS NOT NULL").bindparams(
+            suffix=f"@{PLACEHOLDER_DOMAIN}"
+        )
     )
-
-    with op.batch_alter_table("users", recreate="always") as batch_op:
-        batch_op.alter_column("email", existing_type=sa.String(320), nullable=False)
+    op.alter_column("users", "email", existing_type=sa.String(320), nullable=False)
