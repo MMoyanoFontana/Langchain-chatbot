@@ -79,9 +79,18 @@ export const VoiceSelector = ({
     prop: valueProp,
   });
 
+  const handleOpenChange = useCallback(
+    (value: boolean) => {
+      if (onOpenChange) {
+        (onOpenChange as any)(value);
+      }
+    },
+    [onOpenChange]
+  );
+
   const [open, setOpen] = useControllableState({
     defaultProp: defaultOpen,
-    onChange: onOpenChange,
+    onChange: onOpenChange ? handleOpenChange : undefined,
     prop: openProp,
   });
 

@@ -1,9 +1,17 @@
-import { AuthPage } from "@/components/auth-page.tsx"
+import { Suspense } from "react"
+import { AuthPage } from "@/components/auth-page"
+
+function LoginForm() {
+  return <AuthPage defaultMode="login" />
+}
+
 export default function LoginPage() {
   return (
     <div className="flex min-h-svh flex-col items-center justify-center bg-muted p-6 md:p-10">
       <div className="w-full max-w-sm md:max-w-md">
-        <AuthPage defaultMode="login" />
+        <Suspense>
+          <LoginForm />
+        </Suspense>
       </div>
     </div>
   )
