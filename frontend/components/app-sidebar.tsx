@@ -162,7 +162,7 @@ export function AppSidebar({ initialUser }: AppSidebarProps) {
                                 tooltip={APP_NAME}
                                 className="hover:bg-transparent active:bg-transparent cursor-default"
                             >
-                                <span className="flex aspect-square size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+                                <span className="flex aspect-square size-8 items-center justify-center rounded-lg border border-sidebar-border/70 bg-sidebar-accent/60 text-sidebar-foreground">
                                     <Route className="size-4" />
                                 </span>
                                 <span className="truncate text-base font-semibold">
