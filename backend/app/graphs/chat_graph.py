@@ -155,6 +155,7 @@ async def run_chat_graph(
         next_branch_index=final_state.get("next_branch_index", 0),
         user_message_id=final_state.get("user_message_id"),
         thread_system_prompt=final_state.get("thread_system_prompt"),
+        supports_reasoning=bool(final_state.get("supports_reasoning", False)),
     )
 
 
@@ -176,4 +177,5 @@ def build_model_stream_input(result: ChatGraphResult) -> ChatModelStreamState:
         "parent_message_id": result.parent_message_id,
         "next_branch_index": result.next_branch_index,
         "thread_system_prompt": result.thread_system_prompt,
+        "supports_reasoning": result.supports_reasoning,
     }

@@ -32,6 +32,77 @@ from app.graphs._nodes import (
 # LLM client construction
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Inline <think> tag parser for models that embed reasoning in plain text
+# (e.g. Qwen QWQ on Groq).  Stateful across chunks so partial tags at
+# chunk boundaries are handled correctly.
+# ---------------------------------------------------------------------------
+
+class _ThinkTagParser:
+    """Separates ``<think>…</think>`` blocks from regular text in a stream."""
+
+    _OPEN = "<think>"
+    _CLOSE = "</think>"
+
+    def __init__(self) -> None:
+        self._in_think = False
+        self._buf = ""
+
+    def feed(self, text: str) -> tuple[str, str]:
+        """Feed a chunk.  Returns ``(visible_text, reasoning_text)``."""
+        self._buf += text
+        visible: list[str] = []
+        reasoning: list[str] = []
+
+        while True:
+            if self._in_think:
+                idx = self._buf.find(self._CLOSE)
+                if idx >= 0:
+                    reasoning.append(self._buf[:idx])
+                    self._buf = self._buf[idx + len(self._CLOSE) :]
+                    self._in_think = False
+                    continue
+                held = self._held_suffix(self._CLOSE)
+                emit_up_to = len(self._buf) - held
+                if emit_up_to > 0:
+                    reasoning.append(self._buf[:emit_up_to])
+                    self._buf = self._buf[emit_up_to:]
+                break
+            else:
+                idx = self._buf.find(self._OPEN)
+                if idx >= 0:
+                    visible.append(self._buf[:idx])
+                    self._buf = self._buf[idx + len(self._OPEN) :]
+                    self._in_think = True
+                    continue
+                held = self._held_suffix(self._OPEN)
+                emit_up_to = len(self._buf) - held
+                if emit_up_to > 0:
+                    visible.append(self._buf[:emit_up_to])
+                    self._buf = self._buf[emit_up_to:]
+                break
+
+        return "".join(visible), "".join(reasoning)
+
+    def flush(self) -> tuple[str, str]:
+        """Flush remaining buffer (call after stream ends)."""
+        remaining = self._buf
+        self._buf = ""
+        if self._in_think:
+            return "", remaining
+        return remaining, ""
+
+    # -- internal --
+
+    def _held_suffix(self, tag: str) -> int:
+        """Length of the longest suffix of ``self._buf`` that is a prefix of *tag*."""
+        max_check = min(len(tag) - 1, len(self._buf))
+        for n in range(max_check, 0, -1):
+            if self._buf.endswith(tag[:n]):
+                return n
+        return 0
+
+
 def _extract_chunk_text(content: object) -> str:
     if isinstance(content, str):
         return content
@@ -42,6 +113,14 @@ def _extract_chunk_text(content: object) -> str:
                 parts.append(item)
                 continue
             if isinstance(item, dict):
+                block_type = item.get("type")
+                # Skip thinking/reasoning blocks — they are streamed separately
+                # via _extract_chunk_reasoning so the frontend can render them
+                # in a collapsible reasoning panel.
+                if block_type in {"thinking", "reasoning"}:
+                    continue
+                if item.get("thought") is True:
+                    continue
                 text_value = item.get("text")
                 if isinstance(text_value, str):
                     parts.append(text_value)
@@ -49,19 +128,76 @@ def _extract_chunk_text(content: object) -> str:
     return ""
 
 
+def _extract_chunk_reasoning(chunk: object) -> str:
+    """Pull thinking/reasoning text out of a LangChain stream chunk.
+
+    Handles Anthropic `thinking` blocks and Gemini `thought` parts carried in
+    `content`, plus OpenAI reasoning summaries surfaced under
+    `additional_kwargs["reasoning"]`.
+    """
+    parts: list[str] = []
+    content = getattr(chunk, "content", None)
+    if isinstance(content, list):
+        for item in content:
+            if not isinstance(item, dict):
+                continue
+            block_type = item.get("type")
+            if block_type == "thinking":
+                thinking = item.get("thinking")
+                if isinstance(thinking, str):
+                    parts.append(thinking)
+            elif block_type == "reasoning":
+                reasoning = item.get("reasoning") or item.get("text")
+                if isinstance(reasoning, str):
+                    parts.append(reasoning)
+            elif item.get("thought") is True:
+                text_value = item.get("text")
+                if isinstance(text_value, str):
+                    parts.append(text_value)
+
+    extra = getattr(chunk, "additional_kwargs", None) or {}
+    reasoning_blob = extra.get("reasoning")
+    if isinstance(reasoning_blob, dict):
+        # OpenAI Responses-API format: { "summary": [{"text": "..."}, ...] }
+        summary = reasoning_blob.get("summary")
+        if isinstance(summary, list):
+            for item in summary:
+                if isinstance(item, dict):
+                    text_value = item.get("text")
+                    if isinstance(text_value, str):
+                        parts.append(text_value)
+        elif isinstance(reasoning_blob.get("text"), str):
+            parts.append(reasoning_blob["text"])
+    elif isinstance(reasoning_blob, str):
+        parts.append(reasoning_blob)
+
+    return "".join(parts)
+
+
+ANTHROPIC_THINKING_BUDGET_TOKENS = 4000
+OPENAI_REASONING_EFFORT = "medium"
+
+
 def _build_chat_client(
     provider_code: ProviderCode,
     model_name: str,
     api_key: str,
+    supports_reasoning: bool = False,
 ):
     if provider_code == ProviderCode.OPENAI:
-        return ChatOpenAI(
-            model=model_name,
-            streaming=True,
-            stream_usage=True,
-            temperature=0.2,
-            api_key=api_key,
-        )
+        kwargs: dict[str, object] = {
+            "model": model_name,
+            "streaming": True,
+            "stream_usage": True,
+            "api_key": api_key,
+        }
+        if supports_reasoning:
+            # Reasoning-capable OpenAI models (o-series, GPT-5.x) reject the
+            # temperature parameter; control depth via reasoning_effort instead.
+            kwargs["reasoning_effort"] = OPENAI_REASONING_EFFORT
+        else:
+            kwargs["temperature"] = 0.2
+        return ChatOpenAI(**kwargs)
 
     if provider_code == ProviderCode.GROQ:
         return ChatOpenAI(
@@ -84,7 +220,23 @@ def _build_chat_client(
                     "Install it in the backend environment."
                 ),
             ) from exc
-        return ChatAnthropic(model=model_name, temperature=0.2, streaming=True, api_key=api_key)
+        kwargs: dict[str, object] = {
+            "model": model_name,
+            "streaming": True,
+            "api_key": api_key,
+        }
+        if supports_reasoning:
+            # Extended thinking requires temperature=1 and a larger max_tokens
+            # to accommodate both the thinking budget and the final answer.
+            kwargs["temperature"] = 1
+            kwargs["max_tokens"] = ANTHROPIC_THINKING_BUDGET_TOKENS + 4096
+            kwargs["thinking"] = {
+                "type": "enabled",
+                "budget_tokens": ANTHROPIC_THINKING_BUDGET_TOKENS,
+            }
+        else:
+            kwargs["temperature"] = 0.2
+        return ChatAnthropic(**kwargs)
 
     if provider_code == ProviderCode.GEMINI:
         try:
@@ -97,7 +249,17 @@ def _build_chat_client(
                     "Install it in the backend environment."
                 ),
             ) from exc
-        return ChatGoogleGenerativeAI(model=model_name, temperature=0.2, google_api_key=api_key)
+        kwargs: dict[str, object] = {
+            "model": model_name,
+            "temperature": 0.2,
+            "google_api_key": api_key,
+        }
+        if supports_reasoning:
+            # Expose Gemini's thought summaries in streamed chunks so we can
+            # forward them to the client.
+            kwargs["thinking_budget"] = -1  # dynamic: model picks its own budget
+            kwargs["include_thoughts"] = True
+        return ChatGoogleGenerativeAI(**kwargs)
 
     raise HTTPException(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -204,10 +366,46 @@ async def _stream_model_and_persist(
     db = _get_db(config)
     writer = get_stream_writer()
     collected_parts: list[str] = []
+    collected_reasoning_parts: list[str] = []
     retrieved_chunks: list[RetrievedChunkState] = []
     started_at = time.perf_counter()
     first_token_at: float | None = None
     usage_total: dict[str, int] | None = None
+    supports_reasoning = bool(state.get("supports_reasoning"))
+    # Always parse <think> tags to strip them from visible content even if the
+    # model isn't flagged supports_reasoning in the catalog.  Reasoning deltas
+    # are only forwarded to the client via the REASONING sentinel when the model
+    # is known to support reasoning (controls the UI panel).
+    think_tag_parser = _ThinkTagParser()
+
+    def _handle_chunk(chunk) -> str | None:
+        """Forward reasoning/text deltas to the client.
+
+        Returns the visible text delta so the caller can track first-token
+        timing. Reasoning deltas are emitted via the REASONING sentinel and
+        collected separately for persistence.
+        """
+        if supports_reasoning:
+            reasoning_delta = _extract_chunk_reasoning(chunk)
+            if reasoning_delta:
+                collected_reasoning_parts.append(reasoning_delta)
+                writer("\x00REASONING:" + json.dumps(reasoning_delta))
+        chunk_text = _extract_chunk_text(chunk.content)
+        # Parse inline <think> tags (Qwen-style models embed reasoning in
+        # the plain text stream rather than using structured blocks).
+        if chunk_text:
+            visible, thinking = think_tag_parser.feed(chunk_text)
+            if thinking:
+                collected_reasoning_parts.append(thinking)
+                if supports_reasoning:
+                    writer("\x00REASONING:" + json.dumps(thinking))
+            chunk_text = visible
+        if chunk_text:
+            collected_parts.append(chunk_text)
+            writer(chunk_text)
+            return chunk_text
+        return None
+
     try:
         provider_code = ProviderCode(state["selected_provider_code"])
         api_key = _resolve_provider_api_key_value(
@@ -221,6 +419,7 @@ async def _stream_model_and_persist(
             provider_code=provider_code,
             model_name=state["selected_model_id"],
             api_key=api_key,
+            supports_reasoning=supports_reasoning,
         )
 
         thread_system_prompt = (state.get("thread_system_prompt") or "").strip()
@@ -251,12 +450,8 @@ async def _stream_model_and_persist(
 
         try:
             async for chunk in llm_with_tools.astream(messages_for_llm):
-                chunk_text = _extract_chunk_text(chunk.content)
-                if chunk_text:
-                    if first_token_at is None:
-                        first_token_at = time.perf_counter()
-                    collected_parts.append(chunk_text)
-                    writer(chunk_text)
+                if _handle_chunk(chunk) is not None and first_token_at is None:
+                    first_token_at = time.perf_counter()
                 accumulated = chunk if accumulated is None else accumulated + chunk  # type: ignore[operator]
         except (NotImplementedError, AttributeError):
             # Model doesn't support tool calling — fall back to plain streaming,
@@ -265,14 +460,11 @@ async def _stream_model_and_persist(
                 raise
             tools_supported = False
             collected_parts = []
+            collected_reasoning_parts.clear()
             accumulated = None
             async for chunk in llm.astream(messages_for_llm):
-                chunk_text = _extract_chunk_text(chunk.content)
-                if chunk_text:
-                    if first_token_at is None:
-                        first_token_at = time.perf_counter()
-                    collected_parts.append(chunk_text)
-                    writer(chunk_text)
+                if _handle_chunk(chunk) is not None and first_token_at is None:
+                    first_token_at = time.perf_counter()
                 accumulated = chunk if accumulated is None else accumulated + chunk  # type: ignore[operator]
         usage_total = _merge_usage(usage_total, _extract_usage(accumulated))
 
@@ -308,14 +500,19 @@ async def _stream_model_and_persist(
             accumulated = None
 
             async for chunk in llm_with_tools.astream(messages_for_llm):
-                chunk_text = _extract_chunk_text(chunk.content)
-                if chunk_text:
-                    if first_token_at is None:
-                        first_token_at = time.perf_counter()
-                    collected_parts.append(chunk_text)
-                    writer(chunk_text)
+                if _handle_chunk(chunk) is not None and first_token_at is None:
+                    first_token_at = time.perf_counter()
                 accumulated = chunk if accumulated is None else accumulated + chunk  # type: ignore[operator]
             usage_total = _merge_usage(usage_total, _extract_usage(accumulated))
+        # Flush any remaining buffered content from the think-tag parser.
+        flush_visible, flush_thinking = think_tag_parser.flush()
+        if flush_thinking:
+            collected_reasoning_parts.append(flush_thinking)
+            if supports_reasoning:
+                writer("\x00REASONING:" + json.dumps(flush_thinking))
+        if flush_visible:
+            collected_parts.append(flush_visible)
+            writer(flush_visible)
     except Exception as exc:
         error_message = f"Error: {exc}"
         _persist_assistant_message(
@@ -344,6 +541,7 @@ async def _stream_model_and_persist(
             "latency_ms": latency_ms,
             "time_to_first_token_ms": ttft_ms,
         }
+        assistant_reasoning = "".join(collected_reasoning_parts).strip() or None
         message_id = _persist_assistant_message(
             db=db,
             thread_id=state["thread_id"],
@@ -354,6 +552,7 @@ async def _stream_model_and_persist(
             parent_message_id=state.get("parent_message_id"),
             branch_index=state.get("next_branch_index", 0),
             metrics=metrics,
+            reasoning_content=assistant_reasoning,
         )
         if retrieved_chunks:
             writer("\x00CITATIONS:" + json.dumps(list(retrieved_chunks)))
