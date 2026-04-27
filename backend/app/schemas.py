@@ -108,6 +108,7 @@ class ProviderModelRead(BaseModel):
     model_id: str
     display_name: str
     is_active: bool
+    supports_reasoning: bool = False
     provider: ProviderRead
 
 
@@ -175,6 +176,7 @@ class ChatMessageRead(BaseModel):
     id: str
     role: MessageRole
     content: str
+    reasoning_content: str | None = None
     attachments: list[ChatAttachment] = Field(default_factory=list)
     citations: list[ChatCitation] = Field(default_factory=list)
     provider_code: ProviderCode | None = None

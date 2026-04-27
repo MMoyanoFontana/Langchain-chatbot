@@ -227,6 +227,7 @@ class ProviderModel(Base):
     model_id: Mapped[str] = mapped_column(String(120))
     display_name: Mapped[str] = mapped_column(String(120))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    supports_reasoning: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     provider: Mapped["Provider"] = relationship(back_populates="models")
@@ -282,6 +283,7 @@ class ChatMessage(Base):
     )
     role: Mapped[MessageRole] = mapped_column(Enum(MessageRole, name="message_role"), index=True)
     content: Mapped[str] = mapped_column(Text)
+    reasoning_content: Mapped[str | None] = mapped_column(Text, nullable=True)
     attachments: Mapped[list[dict[str, str | None]]] = mapped_column(
         JSON,
         default=list,
