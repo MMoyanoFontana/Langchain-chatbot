@@ -22,39 +22,62 @@ LOGGER = logging.getLogger(__name__)
 class _FetchedModel:
     model_id: str
     display_name: str
+    supports_reasoning: bool = False
 
 
-# Matches dated snapshot suffixes like -2024-05-13 or -2025-08
+def _infer_reasoning_support(provider: ProviderCode, model_id: str) -> bool:
+    lower = model_id.lower()
+    if provider == ProviderCode.OPENAI:
+        # o-series always reason; gpt-5 / gpt-5-mini / bare point-releases
+        # (gpt-5.2) reason too, but versioned suffixed variants (gpt-5.4-mini)
+        # are standard chat models that don't surface thinking tokens.
+        # o-series surfaces reasoning via Chat Completions.
+        # gpt-5 and bare point-releases (gpt-5.2) do too; -mini variants do not.
+        return bool(re.match(r"^o\d|^gpt-5$|^gpt-5\.\d+$", lower))
+    if provider == ProviderCode.ANTHROPIC:
+        return bool(re.match(r"^claude-(opus|sonnet|haiku)-4", lower))
+    if provider == ProviderCode.GEMINI:
+        return bool(re.match(r"^gemini-(2\.5|3)", lower))
+    if provider == ProviderCode.GROQ:
+        return bool(re.search(r"deepseek-r1|reasoning", lower))
+    return False
+
+
+def _is_chat_model(
+    model_id: str,
+    include_prefixes: tuple[str, ...],
+    skip_substrings: tuple[str, ...] = (),
+    snapshot_pattern: re.Pattern[str] | None = None,
+    skip_latest: bool = False,
+) -> bool:
+    lower = model_id.lower()
+    if not any(lower.startswith(p) for p in include_prefixes):
+        return False
+    if any(s in lower for s in skip_substrings):
+        return False
+    if skip_latest and lower.endswith("-latest"):
+        return False
+    if snapshot_pattern and snapshot_pattern.search(model_id):
+        return False
+    return True
+
+
 _OPENAI_DATE_SUFFIX = re.compile(r"-20\d{2}-\d{2}")
-
-# Substrings that disqualify any model (non-chat capabilities)
+_OPENAI_INCLUDE_PREFIXES = ("gpt-5",)
 _OPENAI_SKIP_SUBSTRINGS = (
     "realtime", "audio", "tts", "whisper", "dall-e",
     "embedding", "moderation", "transcribe", "search",
     "image", "sora", "codex", "chat-latest",
 )
-# Exact IDs to exclude (legacy base model names)
-_OPENAI_SKIP_EXACT = {"gpt-4", "gpt-4-base"}
-# Prefixes for legacy / non-chat families
-_OPENAI_SKIP_PREFIXES = (
-    "gpt-3",       # all gpt-3.x
-    "gpt-4-",      # gpt-4-turbo, gpt-4-0613, etc. (NOT gpt-4o)
-    "chatgpt-",    # chatgpt-4o-latest aliases
-    "babbage", "davinci", "curie", "ada-", "canary",
-)
 
+_ANTHROPIC_INCLUDE_PREFIXES = ("claude-opus-4", "claude-sonnet-4", "claude-haiku-4")
 
-def _is_openai_chat_model(model_id: str) -> bool:
-    if model_id in _OPENAI_SKIP_EXACT:
-        return False
-    lower = model_id.lower()
-    if any(s in lower for s in _OPENAI_SKIP_SUBSTRINGS):
-        return False
-    if any(lower.startswith(p) for p in _OPENAI_SKIP_PREFIXES):
-        return False
-    if _OPENAI_DATE_SUFFIX.search(model_id):  # skip pinned dated snapshots
-        return False
-    return True
+_GEMINI_SNAPSHOT_SUFFIX = re.compile(r"-\d{3}$|-\d{2}-\d{4}$")
+_GEMINI_INCLUDE_PREFIXES = ("gemini-2.5", "gemini-3.1", "gemini-3")
+_GEMINI_SKIP_SUBSTRINGS = ("tts", "gemini-3-pro", "nano", "customtools", "image", "deep-research")
+
+_GROQ_INCLUDE_PREFIXES = ("openai/gpt-oss", "llama-3.3", "llama-3.1")
+_GROQ_SKIP_SUBSTRINGS = ("safeguard",)
 
 
 def _fetch_openai_models(api_key: str) -> list[_FetchedModel]:
@@ -68,10 +91,16 @@ def _fetch_openai_models(api_key: str) -> list[_FetchedModel]:
     models: list[_FetchedModel] = []
     for item in resp.json().get("data", []):
         model_id: str = item.get("id", "")
-        if not _is_openai_chat_model(model_id):
+        if not _is_chat_model(model_id, _OPENAI_INCLUDE_PREFIXES, _OPENAI_SKIP_SUBSTRINGS, _OPENAI_DATE_SUFFIX):
             continue
-        display_name = model_id.replace("-", " ").title()
-        models.append(_FetchedModel(model_id=model_id, display_name=display_name))
+        display_name = model_id.replace("-", " ").title().replace("Gpt", "GPT").replace("Oss", "OSS")
+        models.append(
+            _FetchedModel(
+                model_id=model_id,
+                display_name=display_name,
+                supports_reasoning=_infer_reasoning_support(ProviderCode.OPENAI, model_id),
+            )
+        )
     return models
 
 
@@ -89,37 +118,17 @@ def _fetch_anthropic_models(api_key: str) -> list[_FetchedModel]:
     models: list[_FetchedModel] = []
     for item in resp.json().get("data", []):
         model_id: str = item.get("id", "")
+        if not _is_chat_model(model_id, _ANTHROPIC_INCLUDE_PREFIXES):
+            continue
         display_name: str = item.get("display_name", model_id)
-        models.append(_FetchedModel(model_id=model_id, display_name=display_name))
+        models.append(
+            _FetchedModel(
+                model_id=model_id,
+                display_name=display_name,
+                supports_reasoning=_infer_reasoning_support(ProviderCode.ANTHROPIC, model_id),
+            )
+        )
     return models
-
-
-# Dated snapshot suffixes for Gemini: -001, -002 or month-year like -10-2025
-_GEMINI_SNAPSHOT_SUFFIX = re.compile(r"-\d{3}$|-\d{2}-\d{4}$")
-
-_GEMINI_SKIP_SUBSTRINGS = (
-    "tts", "image", "computer-use", "robotics", "lyria",
-    "deep-research", "customtools", "clip",
-)
-_GEMINI_SKIP_PREFIXES = (
-    "gemma-",   # open-weights Gemma family, separate from Gemini
-    "nano-",    # internal/experimental
-)
-
-
-def _is_gemini_chat_model(model_id: str) -> bool:
-    if not model_id.startswith("gemini-"):
-        return False
-    lower = model_id.lower()
-    if any(s in lower for s in _GEMINI_SKIP_SUBSTRINGS):
-        return False
-    if any(lower.startswith(p) for p in _GEMINI_SKIP_PREFIXES):
-        return False
-    if lower.endswith("-latest"):
-        return False
-    if _GEMINI_SNAPSHOT_SUFFIX.search(model_id):  # pinned dated/versioned snapshots
-        return False
-    return True
 
 
 def _fetch_gemini_models(api_key: str) -> list[_FetchedModel]:
@@ -138,10 +147,16 @@ def _fetch_gemini_models(api_key: str) -> list[_FetchedModel]:
         # name looks like "models/gemini-2.0-flash"
         name: str = item.get("name", "")
         model_id = name.removeprefix("models/")
-        if not _is_gemini_chat_model(model_id):
+        if not _is_chat_model(model_id, _GEMINI_INCLUDE_PREFIXES, _GEMINI_SKIP_SUBSTRINGS, _GEMINI_SNAPSHOT_SUFFIX, skip_latest=True):
             continue
         display_name: str = item.get("displayName", model_id)
-        models.append(_FetchedModel(model_id=model_id, display_name=display_name))
+        models.append(
+            _FetchedModel(
+                model_id=model_id,
+                display_name=display_name,
+                supports_reasoning=_infer_reasoning_support(ProviderCode.GEMINI, model_id),
+            )
+        )
     return models
 
 
@@ -153,15 +168,19 @@ def _fetch_groq_models(api_key: str) -> list[_FetchedModel]:
         )
         resp.raise_for_status()
 
-    _SKIP_SUBSTRINGS = ("whisper", "guard", "tts", "embedding", "vision")
     models: list[_FetchedModel] = []
     for item in resp.json().get("data", []):
         model_id: str = item.get("id", "")
-        lower = model_id.lower()
-        if any(s in lower for s in _SKIP_SUBSTRINGS):
+        if not _is_chat_model(model_id, _GROQ_INCLUDE_PREFIXES, _GROQ_SKIP_SUBSTRINGS):
             continue
-        display_name = model_id.replace("-", " ").replace("_", " ").title()
-        models.append(_FetchedModel(model_id=model_id, display_name=display_name))
+        display_name = model_id.replace("-", " ").replace("_", " ").title().replace("Gpt", "GPT").replace("Oss", "OSS")
+        models.append(
+            _FetchedModel(
+                model_id=model_id,
+                display_name=display_name,
+                supports_reasoning=_infer_reasoning_support(ProviderCode.GROQ, model_id),
+            )
+        )
     return models
 
 
@@ -222,13 +241,20 @@ def _upsert_provider_models(
                     model_id=fm.model_id,
                     display_name=fm.display_name,
                     is_active=True,
+                    supports_reasoning=fm.supports_reasoning,
                 )
             )
             stats.models_added += 1
         else:
-            if stored.display_name != fm.display_name or not stored.is_active:
+            changed = (
+                stored.display_name != fm.display_name
+                or not stored.is_active
+                or stored.supports_reasoning != fm.supports_reasoning
+            )
+            if changed:
                 stored.display_name = fm.display_name
                 stored.is_active = True
+                stored.supports_reasoning = fm.supports_reasoning
                 stats.models_updated += 1
 
     if deactivate_unlisted:

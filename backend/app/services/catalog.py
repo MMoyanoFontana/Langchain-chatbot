@@ -12,6 +12,7 @@ from app.models import Provider, ProviderCode, ProviderModel
 class CatalogModelDefinition:
     model_id: str
     display_name: str
+    supports_reasoning: bool = False
 
 
 @dataclass(frozen=True)
@@ -27,9 +28,15 @@ RECOMMENDED_PROVIDER_CATALOG: tuple[CatalogProviderDefinition, ...] = (
         code=ProviderCode.OPENAI,
         display_name="OpenAI",
         models=(
-            CatalogModelDefinition(model_id="gpt-5.2", display_name="GPT-5.2"),
-            CatalogModelDefinition(model_id="gpt-5", display_name="GPT-5"),
-            CatalogModelDefinition(model_id="gpt-5-mini", display_name="GPT-5 mini"),
+            CatalogModelDefinition(
+                model_id="gpt-5.2", display_name="GPT-5.2", supports_reasoning=True
+            ),
+            CatalogModelDefinition(
+                model_id="gpt-5", display_name="GPT-5", supports_reasoning=True
+            ),
+            CatalogModelDefinition(
+                model_id="gpt-5-mini", display_name="GPT-5 mini"
+            ),
         ),
     ),
     CatalogProviderDefinition(
@@ -37,12 +44,14 @@ RECOMMENDED_PROVIDER_CATALOG: tuple[CatalogProviderDefinition, ...] = (
         display_name="Anthropic",
         models=(
             CatalogModelDefinition(
-                model_id="claude-opus-4-1-20250805",
-                display_name="Claude Opus 4.1",
+                model_id="claude-opus-4-5-20251101",
+                display_name="Claude Opus 4.5",
+                supports_reasoning=True,
             ),
             CatalogModelDefinition(
-                model_id="claude-sonnet-4-20250514",
-                display_name="Claude Sonnet 4",
+                model_id="claude-sonnet-4-5-20251022",
+                display_name="Claude Sonnet 4.5",
+                supports_reasoning=True,
             ),
         ),
     ),
@@ -50,8 +59,16 @@ RECOMMENDED_PROVIDER_CATALOG: tuple[CatalogProviderDefinition, ...] = (
         code=ProviderCode.GEMINI,
         display_name="Google Gemini",
         models=(
-            CatalogModelDefinition(model_id="gemini-2.5-pro", display_name="Gemini 2.5 Pro"),
-            CatalogModelDefinition(model_id="gemini-2.5-flash", display_name="Gemini 2.5 Flash"),
+            CatalogModelDefinition(
+                model_id="gemini-2.5-pro",
+                display_name="Gemini 2.5 Pro",
+                supports_reasoning=True,
+            ),
+            CatalogModelDefinition(
+                model_id="gemini-2.5-flash",
+                display_name="Gemini 2.5 Flash",
+                supports_reasoning=True,
+            ),
         ),
     ),
     CatalogProviderDefinition(
@@ -60,10 +77,8 @@ RECOMMENDED_PROVIDER_CATALOG: tuple[CatalogProviderDefinition, ...] = (
         models=(
             CatalogModelDefinition(model_id="openai/gpt-oss-120b", display_name="GPT-OSS 120B"),
             CatalogModelDefinition(model_id="openai/gpt-oss-20b", display_name="GPT-OSS 20B"),
-            CatalogModelDefinition(
-                model_id="meta-llama/llama-4-scout-17b-16e-instruct",
-                display_name="Llama 4 Scout 17B",
-            ),
+            CatalogModelDefinition(model_id="llama-3.3-70b-versatile", display_name="Llama 3.3 70B"),
+            CatalogModelDefinition(model_id="llama-3.1-8b-instant", display_name="Llama 3.1 8B"),
         ),
     ),
     CatalogProviderDefinition(
@@ -114,12 +129,14 @@ def seed_provider_catalog(db: Session) -> None:
                         model_id=model_definition.model_id,
                         display_name=model_definition.display_name,
                         is_active=True,
+                        supports_reasoning=model_definition.supports_reasoning,
                     )
                 )
                 continue
 
             stored_model.display_name = model_definition.display_name
             stored_model.is_active = True
+            stored_model.supports_reasoning = model_definition.supports_reasoning
 
         if provider_definition.deactivate_unlisted_models:
             for stored_model in models_for_provider:
