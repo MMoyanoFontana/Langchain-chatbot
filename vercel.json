@@ -1,7 +1,0 @@
-{
-  "buildCommand": "cd frontend && pnpm build",
-  "outputDirectory": "frontend/.next",
-  "env": {
-    "BACKEND_URL": "@backend_url"
-  }
-}

@@ -1,38 +1,44 @@
-services:
-  - type: web
-    name: langchain-chatbot-backend
-    runtime: docker
-    dockerfilePath: ./backend/Dockerfile
-    port: 8000
-    scaling:
-      minInstances: 1
-      maxInstances: 3
-    envVars:
-      - key: PYTHONUNBUFFERED
-        value: "1"
-      # Required environment variables — set these in Render dashboard or via CLI
-      - key: API_KEY_ENCRYPTION_KEY
-        sync: false
-      - key: AUTH_SECRET
-        sync: false
+# Exported from Render on 2026-04-27T17:41:11Z
+version: "1"
+projects:
+- name: Langchain-Chatbot
+  environments:
+  - name: Production
+    services:
+    - type: web
+      name: Langchain-chatbot
+      runtime: python
+      repo: https://github.com/MMoyanoFontana/Langchain-chatbot
+      plan: free
+      envVars:
       - key: BACKEND_CORS_ORIGINS
-        value: "https://your-frontend-url.vercel.app"
-      - key: DATABASE_URL
-        sync: false  # Set to your Neon Postgres connection string
-      # Optional RAG variables
-      - key: PINECONE_API_KEY
         sync: false
-      - key: PINECONE_INDEX_NAME
+      - key: GROQ_API_KEY
         sync: false
-      - key: PINECONE_NAMESPACE_PREFIX
-        value: "rag"
-      # Optional observability
-      - key: LANGSMITH_API_KEY
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: TAVILY_API_KEY
         sync: false
       - key: LANGSMITH_PROJECT
         sync: false
-      # Optional OAuth
-      - key: GOOGLE_OAUTH_CLIENT_ID
+      - key: LANGSMITH_API_KEY
         sync: false
-      - key: GOOGLE_OAUTH_CLIENT_SECRET
+      - key: LANGSMITH_ENDPOINT
         sync: false
+      - key: LANGSMITH_TRACING
+        sync: false
+      - key: PINECONE_INDEX_NAME
+        sync: false
+      - key: PINECONE_API_KEY
+        sync: false
+      - key: API_KEY_ENCRYPTION_KEY
+        sync: false
+      region: oregon
+      buildCommand: uv sync
+      startCommand: uv run fastapi run main.py
+      autoDeployTrigger: commit
+      rootDir: backend/
