@@ -147,7 +147,7 @@ export const FileTreeFolder = ({
           {...props}
         >
           <CollapsibleTrigger render={<button className={cn(
-                                  "flex w-full items-center gap-1 rounded px-2 py-1 text-left transition-colors hover:bg-muted/50",
+                                  "flex w-full items-center gap-1 rounded px-2 py-1 text-left transition-colors hover:bg-muted/50 cursor-pointer",
                                   isSelected && "bg-muted"
                                 )} onClick={handleSelect} type="button" />}><ChevronRightIcon
                                   className={cn(

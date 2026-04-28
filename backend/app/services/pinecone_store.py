@@ -66,22 +66,28 @@ class PineconeVectorStore:
         namespace: str,
         vectors: list[PineconeVectorRecord],
     ) -> None:
-        payload = [
-            {
-                "id": vector.id,
-                "values": vector.values,
-                "metadata": vector.metadata,
-            }
-            for vector in vectors
-        ]
-        try:
-            await asyncio.to_thread(
-                self._get_index().upsert,
-                vectors=payload,
-                namespace=namespace,
-            )
-        except PineconeException as exc:
-            raise PineconeVectorStoreError(str(exc) or "Pinecone upsert failed.") from exc
+        if not vectors:
+            return
+
+        batch_size = 100
+        for i in range(0, len(vectors), batch_size):
+            batch = vectors[i : i + batch_size]
+            payload = [
+                {
+                    "id": vector.id,
+                    "values": vector.values,
+                    "metadata": vector.metadata,
+                }
+                for vector in batch
+            ]
+            try:
+                await asyncio.to_thread(
+                    self._get_index().upsert,
+                    vectors=payload,
+                    namespace=namespace,
+                )
+            except PineconeException as exc:
+                raise PineconeVectorStoreError(str(exc) or "Pinecone upsert failed.") from exc
 
     async def query(
         self,

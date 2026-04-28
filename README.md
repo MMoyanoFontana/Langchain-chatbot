@@ -14,6 +14,10 @@ Multi-provider AI chatbot with **agentic RAG**, per-thread document grounding, p
 - **Cross-thread search**, **per-thread system prompts**, **markdown/JSON export**, **document delete & retry**, **rate limiting**, **OAuth** (Google/GitHub/Microsoft).
 - **Catalog auto-sync** — backend periodically pulls each provider's model list and upserts the catalog.
 
+## Live Demo
+
+Try it out: **[https://langchain-chatbot-phi.vercel.app/](https://langchain-chatbot-phi.vercel.app/)**
+
 ## Architecture
 
 A single `POST /chat` request runs through two LangGraphs: a **prep graph** (validation, memory, persistence, ingestion, retrieval) and a **stream graph** (model + agentic tool loop). The split lets the prep graph commit DB state synchronously before bytes start streaming over the wire.

@@ -305,9 +305,9 @@ const ExpandMessageButton = ({ message }: ExpandMessageButtonProps) => {
             {title}
           </DialogTitle>
         </DialogHeader>
-        <ScrollArea className="min-h-0 flex-1">
-          <div className="px-5 py-4">
-            <MessageResponse className="text-sm">{message.content}</MessageResponse>
+        <ScrollArea className="min-h-0 flex-1 overflow-auto">
+          <div className="w-full px-5 py-4">
+            <MessageResponse className="text-sm [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_table]:max-w-full [&_table]:overflow-x-auto">{message.content}</MessageResponse>
             {message.citations?.length ? (
               <MessageCitations citations={message.citations} />
             ) : null}
