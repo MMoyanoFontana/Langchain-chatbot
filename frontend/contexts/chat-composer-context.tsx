@@ -2,13 +2,9 @@
 
 import { createContext, useCallback, useContext, useState } from "react";
 import type { PromptInputMessage } from "@/components/ai-elements/prompt-input";
+import type { BackendProviderCode } from "@/lib/provider-codes";
 
-export type BackendProviderCode =
-  | "openai"
-  | "anthropic"
-  | "gemini"
-  | "groq"
-  | "other";
+export type { BackendProviderCode } from "@/lib/provider-codes";
 
 export type CompareModelSelection = {
   modelId: string;

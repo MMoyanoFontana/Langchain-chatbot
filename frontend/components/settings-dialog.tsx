@@ -49,6 +49,7 @@ import {
   SidebarProvider,
 } from "@/components/ui/sidebar"
 import { cn } from "@/lib/utils"
+import type { BackendProviderCode } from "@/lib/provider-codes"
 
 type NavItem = {
   id: SettingsTab
@@ -60,13 +61,6 @@ type NavItem = {
 type SettingsTab = "profile" | "providers" | "general" | "memory"
 type ThemeMode = "light" | "dark" | "system"
 type Language = "en" | "es"
-type BackendProviderCode =
-  | "openai"
-  | "anthropic"
-  | "gemini"
-  | "groq"
-  | "other"
-
 type ProviderOption = {
   id: string
   name: string
@@ -137,7 +131,12 @@ const PROVIDER_OPTIONS: ProviderOption[] = [
     providerCode: "gemini",
   },
   { id: "groq", name: "Groq", logo: "groq", inputType: "api-key", providerCode: "groq" },
-
+  {
+    id: "ollama",
+    name: "Ollama (local)",
+    inputType: "endpoint",
+    providerCode: "ollama",
+  },
 ]
 
 const THEME_OPTIONS: ThemeOption[] = [
@@ -188,7 +187,7 @@ const nav: NavItem[] = [
   {
     id: "providers",
     name: "Providers",
-    description: "Add API keys for cloud providers.",
+    description: "Add API keys or local endpoint URLs.",
     icon: KeyRound,
   },
   {

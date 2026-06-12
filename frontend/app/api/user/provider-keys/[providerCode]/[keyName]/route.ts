@@ -5,14 +5,7 @@ import {
   getRouteSessionToken,
   parseUpstreamError,
 } from "@/lib/backend-route";
-
-const ALLOWED_PROVIDER_CODES = new Set([
-  "openai",
-  "anthropic",
-  "gemini",
-  "groq",
-  "other",
-]);
+import { isBackendProviderCode } from "@/lib/provider-codes";
 
 type ProviderApiKeyRead = {
   id: string;
@@ -32,7 +25,7 @@ export async function DELETE(
   }
 
   const { providerCode, keyName } = await context.params;
-  if (!ALLOWED_PROVIDER_CODES.has(providerCode)) {
+  if (!isBackendProviderCode(providerCode)) {
     return NextResponse.json({ error: "Unsupported provider code." }, { status: 400 });
   }
 

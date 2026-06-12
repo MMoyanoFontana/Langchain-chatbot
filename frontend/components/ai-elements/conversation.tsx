@@ -4,6 +4,7 @@ import type { ComponentProps } from "react";
 import type { FileUIPart } from "ai";
 
 import { Button } from "@/components/ui/button";
+import type { BackendProviderCode } from "@/lib/provider-codes";
 import { cn } from "@/lib/utils";
 import { ArrowDownIcon, DownloadIcon } from "lucide-react";
 import { useCallback } from "react";
@@ -106,7 +107,7 @@ export interface ConversationMessage {
   role: "user" | "assistant" | "system" | "data" | "tool";
   content: string;
   attachments?: FileUIPart[];
-  providerCode?: "openai" | "anthropic" | "gemini" | "groq" | "other";
+  providerCode?: BackendProviderCode;
   modelName?: string | null;
   citations?: ConversationMessageCitation[];
   reasoning?: string | null;

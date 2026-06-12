@@ -9,6 +9,7 @@ import {
 } from "@/lib/chat-citations";
 import { toChatAttachment, type BackendChatAttachment } from "@/lib/chat-attachments";
 import { fetchBackend, getServerSessionToken } from "@/lib/backend";
+import { isBackendProviderCode } from "@/lib/provider-codes";
 
 type ChatPageProps = {
   params: Promise<{
@@ -54,18 +55,8 @@ const toConversationRole = (role: string): ConversationMessage["role"] => {
 
 const toProviderCode = (
   providerCode: string | null | undefined
-): ConversationMessage["providerCode"] => {
-  if (
-    providerCode === "openai" ||
-    providerCode === "anthropic" ||
-    providerCode === "gemini" ||
-    providerCode === "groq" ||
-    providerCode === "other"
-  ) {
-    return providerCode;
-  }
-  return undefined;
-};
+): ConversationMessage["providerCode"] =>
+  providerCode && isBackendProviderCode(providerCode) ? providerCode : undefined;
 
 const isDefined = <Value,>(value: Value | null): value is Value => value !== null;
 

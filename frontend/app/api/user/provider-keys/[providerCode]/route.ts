@@ -5,14 +5,7 @@ import {
   getRouteSessionToken,
   parseUpstreamError,
 } from "@/lib/backend-route";
-
-const ALLOWED_PROVIDER_CODES = new Set([
-  "openai",
-  "anthropic",
-  "gemini",
-  "groq",
-  "other",
-]);
+import { isBackendProviderCode } from "@/lib/provider-codes";
 
 type UpsertProviderKeyBody = {
   apiKey?: string;
@@ -31,7 +24,7 @@ export async function PUT(
   }
 
   const { providerCode } = await context.params;
-  if (!ALLOWED_PROVIDER_CODES.has(providerCode)) {
+  if (!isBackendProviderCode(providerCode)) {
     return NextResponse.json({ error: "Unsupported provider code." }, { status: 400 });
   }
 

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 
-import type { BackendProviderCode } from "@/contexts/chat-composer-context";
+import type { BackendProviderCode } from "@/lib/provider-codes";
 
 export interface ChatCatalogProvider {
   id: number;
@@ -47,6 +47,7 @@ export const normalizeProviderCode = (providerCode: string): BackendProviderCode
     providerCode === "anthropic" ||
     providerCode === "gemini" ||
     providerCode === "groq" ||
+    providerCode === "ollama" ||
     providerCode === "other"
   ) {
     return providerCode;
@@ -69,8 +70,16 @@ export interface UseChatModelsResult {
   loading: boolean;
 }
 
+type OllamaModelResponse = {
+  model_id: string;
+  display_name: string;
+};
+
+const OLLAMA_PROVIDER_LABEL = "Ollama (local)";
+
 /**
  * Fetches the model catalog and the user's connected provider keys.
+ * When Ollama is connected, also queries the local server for its model list.
  * Shared between the prompt composer (model picker) and the chat session
  * (compare-with picker on existing assistant messages).
  */
@@ -116,6 +125,40 @@ export function useChatModels(): UseChatModelsResult {
 
         setModels(mapped);
         setConnectedProviderCodes(connected);
+        setLoading(false);
+
+        // Fetch Ollama models dynamically from the local server when
+        // connected — after the catalog is shown, so an unreachable local
+        // server (5s timeout) never blocks the model picker.
+        if (connected.has("ollama")) {
+          try {
+            const ollamaResponse = await fetch("/api/user/providers/ollama/models", {
+              cache: "no-store",
+            });
+            if (ollamaResponse.ok) {
+              const ollamaModels = (await ollamaResponse.json()) as OllamaModelResponse[];
+              const ollamaMapped: ChatModel[] = ollamaModels.map((m) => ({
+                id: m.model_id,
+                name: m.display_name,
+                providerLabel: OLLAMA_PROVIDER_LABEL,
+                providerSlug: "ollama",
+                providerCode: "ollama",
+                supportsReasoning: false,
+              }));
+              if (cancelled) return;
+              // Model selection routes by id alone, so drop Ollama models
+              // whose id collides with a catalog model.
+              setModels((prev) => [
+                ...prev,
+                ...ollamaMapped.filter(
+                  (model) => !prev.some((existing) => existing.id === model.id)
+                ),
+              ]);
+            }
+          } catch {
+            // Non-critical — local server may be unreachable; skip Ollama models.
+          }
+        }
       } catch {
         if (!cancelled) {
           setModels([]);
