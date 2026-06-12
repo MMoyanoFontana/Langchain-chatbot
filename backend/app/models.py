@@ -29,6 +29,7 @@ class ProviderCode(str, enum.Enum):
     GEMINI = "gemini"
     ANTHROPIC = "anthropic"
     GROQ = "groq"
+    OLLAMA = "ollama"
     OTHER = "other"
 
 
@@ -100,7 +101,7 @@ class Provider(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     code: Mapped[ProviderCode] = mapped_column(
-        Enum(ProviderCode, name="provider_code"),
+        Enum(ProviderCode, name="provider_code", native_enum=False),
         unique=True,
         index=True,
     )
@@ -133,7 +134,7 @@ class AuthIdentity(Base):
         index=True,
     )
     provider: Mapped[AuthProvider] = mapped_column(
-        Enum(AuthProvider, name="auth_provider"),
+        Enum(AuthProvider, name="auth_provider", native_enum=False),
         index=True,
     )
     provider_subject: Mapped[str] = mapped_column(String(255))
@@ -282,7 +283,9 @@ class ChatMessage(Base):
         ForeignKey("chat_threads.id", ondelete="CASCADE"),
         index=True,
     )
-    role: Mapped[MessageRole] = mapped_column(Enum(MessageRole, name="message_role"), index=True)
+    role: Mapped[MessageRole] = mapped_column(
+        Enum(MessageRole, name="message_role", native_enum=False), index=True
+    )
     content: Mapped[str] = mapped_column(Text)
     reasoning_content: Mapped[str | None] = mapped_column(Text, nullable=True)
     attachments: Mapped[list[dict[str, str | None]]] = mapped_column(
@@ -364,7 +367,7 @@ class IndexedDocument(Base):
     chunk_count: Mapped[int] = mapped_column(Integer, default=0)
     pinecone_namespace: Mapped[str] = mapped_column(String(255))
     status: Mapped[DocumentIndexStatus] = mapped_column(
-        Enum(DocumentIndexStatus, name="document_index_status"),
+        Enum(DocumentIndexStatus, name="document_index_status", native_enum=False),
         default=DocumentIndexStatus.PENDING,
         index=True,
     )

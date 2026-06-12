@@ -6,20 +6,24 @@ from pathlib import Path
 
 from alembic import command
 from alembic.config import Config
+from dotenv import load_dotenv
 from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./chatbot.db")
+# DATABASE_URL is read at import time, so the .env file must be loaded here —
+# main.py's load_dotenv() runs only after this module is imported.
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+
+DATABASE_URL = os.getenv(
+    "DATABASE_URL", "postgresql+psycopg://postgres:postgres@localhost:5432/chatbot"
+)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 ALEMBIC_CONFIG_PATH = PROJECT_ROOT / "alembic.ini"
-
-connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
 
 engine = create_engine(
     DATABASE_URL,
     future=True,
     pool_pre_ping=True,
-    connect_args=connect_args,
 )
 
 SessionLocal = sessionmaker(
