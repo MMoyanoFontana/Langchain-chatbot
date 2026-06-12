@@ -13,14 +13,12 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator
 
-import pytest
-from langchain_core.messages import AIMessageChunk
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.db import Base
-from app.graphs._nodes import ChatModelStreamState, RetrievedChunkState
+from app.graphs._nodes import ChatModelStreamState
 from app.graphs._stream import _format_tool_retrieval_result, _stream_model_and_persist
 from app.models import (
     ChatMessage,
@@ -29,7 +27,6 @@ from app.models import (
     IndexedDocument,
     MessageRole,
     User,
-    utc_now,
 )
 from app.services.rag import RetrievalResult, RetrievedChunk
 
@@ -461,7 +458,7 @@ class TestStreamModelToolPath:
     def test_history_messages_passed_to_llm(self):
         """history_messages from state must be sent to the LLM as Human/AI messages
         between the system prompt and the current user prompt."""
-        from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+        from langchain_core.messages import SystemMessage
 
         SessionLocal = _session_factory()
         with SessionLocal() as db:

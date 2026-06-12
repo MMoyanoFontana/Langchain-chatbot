@@ -21,7 +21,11 @@ Tests use in-memory SQLite (`StaticPool`) with a fake vector store and fake embe
 
 ## Database
 
-**Local dev:** Defaults to SQLite (`sqlite:///./chatbot.db`), which requires no setup.
+PostgreSQL only. **Local dev:** start the bundled instance and the default `DATABASE_URL` just works:
+
+```bash
+docker compose up -d postgres   # from the repo root
+```
 
 **Production:** Use Postgres via `DATABASE_URL`. Free-tier Neon setup:
 
@@ -30,7 +34,7 @@ Tests use in-memory SQLite (`StaticPool`) with a fake vector store and fake embe
 3. Copy your connection string (`postgres://user:pass@host/dbname`)
 4. Set `DATABASE_URL` in your deploy environment (Render, Railway, etc.)
 
-The app handles both SQLite and Postgres automatically—migrations run on startup, same code path.
+Migrations run on startup — same code path locally and in prod.
 
 ### Migrations
 
@@ -39,8 +43,8 @@ Alembic migrations live in [alembic/versions/](alembic/versions/) and run automa
 After changing `app/models.py`:
 
 ```bash
-alembic revision --autogenerate -m "describe the change"
-# Review the generated file, rename if needed (YYYYMMDD_NNNNNN_description.py), commit
+alembic revision --autogenerate -m "describe the change" --rev-id YYYYMMDD_NNNNNN
+# Review the generated file before committing
 ```
 
 ## Deployment (Render)
@@ -84,7 +88,7 @@ Reads `.env` in this directory (loaded by `python-dotenv`).
 
 | Variable | Notes |
 |---|---|
-| `DATABASE_URL` | Defaults to `sqlite:///./chatbot.db`. Use a Postgres URL in prod. |
+| `DATABASE_URL` | PostgreSQL only. Defaults to `postgresql+psycopg://postgres:postgres@localhost:5432/chatbot` (matches `docker-compose.yml`). |
 | `RATE_LIMIT_PER_MINUTE` | Per-user limit on `/chat` and document retry. Defaults to 60. |
 | `CATALOG_SYNC_INTERVAL_HOURS` | Defaults to 24. |
 | `LANGSMITH_API_KEY` + `LANGSMITH_PROJECT` | Enables LangSmith tracing. |

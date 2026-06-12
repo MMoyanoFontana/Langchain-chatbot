@@ -91,7 +91,7 @@ Two layers, both injected into the system prompt before each model call:
 | **Backend** | FastAPI, Pydantic, SQLAlchemy, Alembic, slowapi, Uvicorn |
 | **AI providers** | OpenAI, Anthropic, Google Gemini, Groq |
 | **Vector DB** | Pinecone (per-user namespaces) |
-| **Database** | Postgres in prod (Neon), SQLite for local dev |
+| **Database** | PostgreSQL (Neon in prod, Docker Compose locally) |
 | **Auth** | Email/password + OAuth (Google, GitHub, Microsoft) — session tokens hashed at rest |
 | **Secrets** | Per-user API keys encrypted with Fernet |
 | **Frontend** | Next.js 16, React 19, Tailwind 4, shadcn/ui, Vercel AI SDK, ai-elements |
@@ -104,6 +104,7 @@ Two layers, both injected into the system prompt before each model call:
 ### Backend
 
 ```bash
+docker compose up -d postgres # local PostgreSQL (from repo root)
 cd backend
 cp .env.example .env          # fill in required vars (see below)
 uv sync
@@ -129,7 +130,7 @@ pnpm lint
 | `BACKEND_CORS_ORIGINS` | Comma-separated, e.g. `http://localhost:3000` |
 | `PINECONE_API_KEY` + `PINECONE_INDEX_NAME` | Required for RAG |
 | `OPENAI_API_KEY` | Server-side embedding key (falls back to user's stored key) |
-| `DATABASE_URL` | Defaults to `sqlite:///./chatbot.db`. Set to a Postgres URL in prod. |
+| `DATABASE_URL` | PostgreSQL only. Defaults to `postgresql+psycopg://postgres:postgres@localhost:5432/chatbot` (matches `docker-compose.yml`). |
 
 Full list with optional vars in [backend/README.md](backend/README.md).
 

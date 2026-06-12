@@ -20,7 +20,6 @@ from app.graphs._nodes import _load_history
 from app.models import ChatMessage, ChatThread, MessageRole, User
 from app.services.history import (
     DEFAULT_HISTORY_TOKEN_BUDGET,
-    HistoryWindow,
     select_history_window,
 )
 

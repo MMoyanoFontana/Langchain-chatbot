@@ -3,7 +3,6 @@ from __future__ import annotations
 from uuid import uuid4
 
 from fastapi import HTTPException, status
-from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
 from sqlalchemy.orm import Session
 
@@ -17,8 +16,6 @@ from app.graphs._nodes import (
     ChatGraphResult,
     ChatGraphState,
     ChatModelStreamState,
-    HistoryMessageState,
-    RetrievedChunkState,
     _error_node,
     _ingest_attachments,
     _load_history,

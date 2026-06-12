@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -32,7 +32,6 @@ from app.models import (
     ProviderCode,
     ProviderModel,
     User,
-    utc_now,
 )
 from app.routers import users as users_router
 from app.services.pinecone_store import PineconeQueryMatch
@@ -42,7 +41,6 @@ from app.services.rag import (
     RagSettings,
 )
 from app.services.current_user import require_current_user
-from app.security import encrypt_secret
 
 
 # ---------------------------------------------------------------------------

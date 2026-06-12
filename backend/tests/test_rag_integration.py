@@ -7,7 +7,6 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.db import Base
-from app.graphs import chat_graph as chat_graph_module
 from app.graphs._nodes import _persist_assistant_message as _nodes_persist_assistant_message
 from app.graphs.chat_graph import run_chat_graph
 from app.models import (
@@ -582,7 +581,7 @@ def test_attachment_only_message_completes_prepare_graph() -> None:
         _create_openai_provider_stack(db, user_id=user.id)
         rag_service = FakeGraphRagService(ingest_calls=[], retrieve_calls=[])
 
-        graph_result = asyncio.run(
+        asyncio.run(
             run_chat_graph(
                 ChatRequest(
                     prompt="",  # no text — attachment only

@@ -12,11 +12,9 @@ Covers:
 from __future__ import annotations
 
 import asyncio
-import json
 from dataclasses import dataclass
 from typing import Any
 
-import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -33,10 +31,8 @@ from app.models import (
     MessageRole,
     User,
     UserMemory,
-    utc_now,
 )
 from app.services.memory import (
-    MemoryContext,
     _looks_declarative,
     get_memory_context,
     update_memory,
