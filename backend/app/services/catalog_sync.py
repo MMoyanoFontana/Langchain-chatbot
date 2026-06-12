@@ -297,6 +297,14 @@ def sync_catalog(db: Session) -> list[ProviderSyncStats]:
                 "catalog_sync_ok provider=%s added=%d updated=%d deactivated=%d",
                 cfg.code.value, stats.models_added, stats.models_updated, stats.models_deactivated,
             )
+        except httpx.HTTPStatusError as exc:
+            LOGGER.exception("catalog_sync_error provider=%s", cfg.code.value)
+            results.append(
+                ProviderSyncStats(
+                    provider=cfg.code.value,
+                    error=f"{exc.response.reason_phrase.lower()} ({exc.response.status_code})",
+                )
+            )
         except Exception as exc:
             LOGGER.exception("catalog_sync_error provider=%s", cfg.code.value)
             results.append(ProviderSyncStats(provider=cfg.code.value, error=str(exc)))

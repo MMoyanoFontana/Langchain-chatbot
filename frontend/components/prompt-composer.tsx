@@ -250,12 +250,17 @@ const PromptComposer = ({
         userSelectedModel,
     ]);
 
-    // When a winner is selected from comparison mode, override the user's model choice.
+    // When a winner is selected from comparison mode, override the user's model
+    // choice. Adjusted during render (not in an effect) so the override applies
+    // in the same pass instead of triggering a second render.
     const normalizedForceModelId = normalizeModelId(forceModelId);
-    useEffect(() => {
-        if (!normalizedForceModelId) return;
-        setUserSelectedModel(normalizedForceModelId);
-    }, [normalizedForceModelId]);
+    const [prevForceModelId, setPrevForceModelId] = useState<string | null>(null);
+    if (normalizedForceModelId !== prevForceModelId) {
+        setPrevForceModelId(normalizedForceModelId);
+        if (normalizedForceModelId) {
+            setUserSelectedModel(normalizedForceModelId);
+        }
+    }
 
     // Persist whichever model is currently effective so it survives reloads.
     // Only writes to storage — no setState — so this is a safe effect.
