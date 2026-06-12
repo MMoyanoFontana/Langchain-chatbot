@@ -17,8 +17,6 @@ from slowapi.errors import RateLimitExceeded
 from starlette.background import BackgroundTask
 from sqlalchemy import text
 
-LOGGER = logging.getLogger(__name__)
-
 from app.db import SessionLocal, init_db
 from app.graphs.chat_graph import (
     CHAT_MODEL_STREAM_GRAPH,
@@ -31,12 +29,14 @@ from app.routers.auth import router as auth_router
 from app.routers.catalog import router as catalog_router
 from app.routers.users import router as users_router
 from app.rate_limit import get_rate_limit, limiter
-from app.runtime_config import get_cors_allowed_origins
+from app.runtime_config import get_cors_allowed_origins, is_debug
 from app.schemas import ChatRequest
 from app.services.auth import purge_expired_sessions
 from app.services.catalog_sync import sync_catalog
 from app.services.current_user import require_current_user
 from app.services.rag import get_rag_service
+
+LOGGER = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -66,7 +66,14 @@ async def lifespan(_app: FastAPI):
         await sync_task
 
 
-app = FastAPI(lifespan=lifespan)
+# API docs are exposed only when DEBUG=true to avoid advertising the schema
+# in production.
+app = FastAPI(
+    lifespan=lifespan,
+    docs_url="/docs" if is_debug() else None,
+    redoc_url="/redoc" if is_debug() else None,
+    openapi_url="/openapi.json" if is_debug() else None,
+)
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)

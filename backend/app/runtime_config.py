@@ -18,6 +18,11 @@ def _parse_cors_origins(raw_value: str) -> list[str]:
 
 
 @lru_cache(maxsize=1)
+def is_debug() -> bool:
+    return os.getenv("DEBUG", "false").strip().lower() == "true"
+
+
+@lru_cache(maxsize=1)
 def get_cors_allowed_origins() -> list[str]:
     configured_origins = (
         os.getenv("BACKEND_CORS_ORIGINS", "").strip()
