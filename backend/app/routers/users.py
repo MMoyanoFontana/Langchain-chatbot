@@ -30,6 +30,7 @@ from app.schemas import (
 from app.rate_limit import get_rate_limit, limiter
 from app.security import EncryptionConfigError, decrypt_secret, encrypt_secret, mask_secret
 from app.services.current_user import require_current_user
+from app.services.ollama import LocalModelServerError, fetch_ollama_models
 from app.services.rag import RagConfigurationError, get_rag_service
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -517,6 +518,46 @@ def delete_current_user_api_key(
     db: Session = Depends(get_db),
 ) -> Response:
     return delete_user_api_key(user.id, api_key_id, db)
+
+
+@router.get("/me/settings/providers/ollama/models")
+async def list_ollama_models(
+    user: User = Depends(require_current_user),
+    db: Session = Depends(get_db),
+) -> list[dict[str, str]]:
+    # Match chat-time key resolution (_find_user_provider_api_key's default
+    # ordering) so the listed models come from the endpoint chat will use.
+    key_record = db.scalar(
+        select(ProviderApiKey)
+        .join(Provider, Provider.id == ProviderApiKey.provider_id)
+        .where(
+            Provider.code == ProviderCode.OLLAMA,
+            Provider.is_active.is_(True),
+            ProviderApiKey.user_id == user.id,
+            ProviderApiKey.is_active.is_(True),
+        )
+        .order_by(ProviderApiKey.is_default.desc(), ProviderApiKey.updated_at.desc())
+    )
+    if key_record is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No Ollama endpoint configured. Add one in Settings.",
+        )
+
+    try:
+        base_url = decrypt_secret(key_record.encrypted_api_key)
+    except (EncryptionConfigError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Stored Ollama endpoint could not be decrypted.",
+        ) from exc
+
+    try:
+        return await fetch_ollama_models(base_url)
+    except LocalModelServerError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
+        ) from exc
 
 
 @router.get("/me/threads", response_model=list[ChatThreadSummaryRead])

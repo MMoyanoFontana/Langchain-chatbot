@@ -23,11 +23,11 @@ from app.models import (
     ProviderModel,
     utc_now,
 )
-from app.schemas import ChatAttachment, ChatRequest
+from app.schemas import ChatAttachment
 from app.security import EncryptionConfigError, decrypt_secret
 from app.services.history import select_history_window
 from app.services.memory import MemoryContext, get_memory_context
-from app.services.rag import IngestionNotice, IngestionResult, RetrievalResult, get_rag_service
+from app.services.rag import IngestionNotice, IngestionResult, get_rag_service
 
 CONFIG_DB_KEY = "db"
 CONFIG_RAG_SERVICE_KEY = "rag_service"
@@ -578,21 +578,44 @@ def _resolve_user_provider_key(
         return _error_state(status.HTTP_422_UNPROCESSABLE_ENTITY, "Model and provider are required.")
 
     provider_code = ProviderCode(provider_code_raw)
-    provider_model = db.scalar(
-        select(ProviderModel)
-        .join(Provider, Provider.id == ProviderModel.provider_id)
-        .where(
-            ProviderModel.model_id == model_id,
-            ProviderModel.is_active.is_(True),
-            Provider.code == provider_code,
-            Provider.is_active.is_(True),
+
+    supports_reasoning = False
+    if provider_code == ProviderCode.OLLAMA:
+        # Ollama models are fetched live from the local server and are not
+        # stored in the catalog, so only the provider row is validated here.
+        provider = db.scalar(
+            select(Provider).where(
+                Provider.code == ProviderCode.OLLAMA,
+                Provider.is_active.is_(True),
+            )
         )
-        .options(joinedload(ProviderModel.provider))
-    )
-    if provider_model is None or provider_model.provider is None:
-        return _error_state(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-            f"Model `{model_id}` is not available for provider `{provider_code.value}`.",
+        if provider is None:
+            return _error_state(
+                status.HTTP_422_UNPROCESSABLE_ENTITY, "Ollama provider is not available."
+            )
+        missing_key_detail = "No Ollama endpoint configured. Add one in Settings."
+    else:
+        provider_model = db.scalar(
+            select(ProviderModel)
+            .join(Provider, Provider.id == ProviderModel.provider_id)
+            .where(
+                ProviderModel.model_id == model_id,
+                ProviderModel.is_active.is_(True),
+                Provider.code == provider_code,
+                Provider.is_active.is_(True),
+            )
+            .options(joinedload(ProviderModel.provider))
+        )
+        if provider_model is None or provider_model.provider is None:
+            return _error_state(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                f"Model `{model_id}` is not available for provider `{provider_code.value}`.",
+            )
+        provider = provider_model.provider
+        supports_reasoning = bool(provider_model.supports_reasoning)
+        missing_key_detail = (
+            f"No active user API key found for provider `{provider.code.value}`. "
+            "Add one in Settings to continue."
         )
 
     thread = db.scalar(
@@ -604,22 +627,16 @@ def _resolve_user_provider_key(
     if thread is None:
         return _error_state(status.HTTP_404_NOT_FOUND, "Chat thread not found.")
 
-    api_key = _find_user_provider_api_key(db, user_id, provider_model.provider_id, thread)
+    api_key = _find_user_provider_api_key(db, user_id, provider.id, thread)
     if api_key is None:
-        return _error_state(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-            (
-                f"No active user API key found for provider `{provider_model.provider.code.value}`. "
-                "Add one in Settings to continue."
-            ),
-        )
+        return _error_state(status.HTTP_422_UNPROCESSABLE_ENTITY, missing_key_detail)
 
     return {
-        "provider_id": provider_model.provider.id,
+        "provider_id": provider.id,
         "provider_api_key_id": api_key.id,
-        "selected_provider_code": provider_model.provider.code.value,
-        "selected_model_id": provider_model.model_id,
-        "supports_reasoning": bool(provider_model.supports_reasoning),
+        "selected_provider_code": provider.code.value,
+        "selected_model_id": model_id,
+        "supports_reasoning": supports_reasoning,
     }
 
 
@@ -802,7 +819,6 @@ async def _build_context_addendum(
     config: RunnableConfig,
 ) -> dict[str, object]:
     db = _get_db(config)
-    rag_service = _get_rag_service(config)
 
     indexed_count = db.scalar(
         select(func.count(IndexedDocument.id)).where(

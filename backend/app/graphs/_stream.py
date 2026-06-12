@@ -14,6 +14,7 @@ from langgraph.config import get_stream_writer
 
 from app.models import ProviderCode
 from app.services.memory import update_memory
+from app.services.ollama import normalize_local_base_url
 from app.services.rag import RetrievalResult
 
 from app.graphs._nodes import (
@@ -207,6 +208,18 @@ def _build_chat_client(
             temperature=0.2,
             base_url="https://api.groq.com/openai/v1",
             api_key=api_key,
+        )
+
+    if provider_code == ProviderCode.OLLAMA:
+        # api_key holds the stored endpoint base URL (e.g. http://localhost:11434).
+        # Local servers ignore auth but LangChain requires a non-empty api_key value.
+        return ChatOpenAI(
+            model=model_name,
+            streaming=True,
+            stream_usage=True,
+            temperature=0.2,
+            base_url=normalize_local_base_url(api_key),
+            api_key="ollama",
         )
 
     if provider_code == ProviderCode.ANTHROPIC:

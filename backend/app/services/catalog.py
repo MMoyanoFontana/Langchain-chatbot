@@ -82,6 +82,12 @@ RECOMMENDED_PROVIDER_CATALOG: tuple[CatalogProviderDefinition, ...] = (
         ),
     ),
     CatalogProviderDefinition(
+        code=ProviderCode.OLLAMA,
+        display_name="Ollama (local)",
+        models=(),
+        deactivate_unlisted_models=False,
+    ),
+    CatalogProviderDefinition(
         code=ProviderCode.OTHER,
         display_name="Other",
         models=(),

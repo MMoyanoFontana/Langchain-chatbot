@@ -5,7 +5,7 @@ from typing import Literal
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
-from app.constants import CHAT_THREAD_TITLE_MAX_LENGTH
+from app.constants import CHAT_MODEL_NAME_MAX_LENGTH, CHAT_THREAD_TITLE_MAX_LENGTH
 from app.models import AuthProvider, DocumentIndexStatus, MessageRole, ProviderCode
 
 
@@ -136,6 +136,7 @@ class ChatRequest(BaseModel):
     )
     model_id: str | None = Field(
         default=None,
+        max_length=CHAT_MODEL_NAME_MAX_LENGTH,
         validation_alias=AliasChoices("model_id", "modelId"),
     )
     provider_code: ProviderCode | None = Field(
