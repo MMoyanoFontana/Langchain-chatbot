@@ -123,7 +123,7 @@ export function AppSidebar({ initialUser }: AppSidebarProps) {
         setSettingsOpen((previous) => {
             const next = !previous
             if (!next) {
-                void refreshUser()
+                void refreshUser(false)
             }
             return next
         })
@@ -132,7 +132,7 @@ export function AppSidebar({ initialUser }: AppSidebarProps) {
     const handleSettingsOpenChange = (open: boolean) => {
         setSettingsOpen(open)
         if (!open) {
-            void refreshUser()
+            void refreshUser(false)
         }
     }
 
