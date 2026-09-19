@@ -245,6 +245,19 @@ export function AuthPage({ className, defaultMode = "login", ...props }: AuthPag
                   {isSignup ? "Sign in" : "Sign up"}
                 </Link>
               </FieldDescription>
+
+              <FieldDescription className="text-center text-xs text-balance">
+                By continuing you agree to the{" "}
+                <Link href="/terms" className="underline underline-offset-4">
+                  Terms of Use
+                </Link>{" "}
+                and{" "}
+                <Link href="/privacy" className="underline underline-offset-4">
+                  Privacy Policy
+                </Link>
+                . This is a portfolio demo &mdash; please don&apos;t upload
+                sensitive information.
+              </FieldDescription>
             </FieldGroup>
           </form>
         </CardContent>

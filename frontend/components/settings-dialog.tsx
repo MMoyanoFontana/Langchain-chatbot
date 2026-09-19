@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import Link from "next/link"
 import { useRouter } from "next/navigation"
 import {
   BrainIcon,
@@ -918,6 +919,34 @@ export function SettingsDialog({
                 Additional languages coming soon
               </TooltipContent>
             </Tooltip>
+          </div>
+
+          <div className="space-y-3 border-t py-4">
+            <div className="space-y-1">
+              <h3 className="text-sm font-medium">Legal</h3>
+              <p className="text-muted-foreground text-xs">
+                This is a personal portfolio demo, not a commercial service. AI
+                output may be inaccurate, and stored data may be removed at any
+                time. Please avoid uploading sensitive information.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+              <Link
+                href="/privacy"
+                target="_blank"
+                className="underline underline-offset-4"
+              >
+                Privacy Policy
+              </Link>
+              <Link
+                href="/terms"
+                target="_blank"
+                className="underline underline-offset-4"
+              >
+                Terms of Use
+              </Link>
+            </div>
           </div>
         </section>
       )

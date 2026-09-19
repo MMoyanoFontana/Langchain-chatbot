@@ -128,3 +128,38 @@
     @apply bg-background text-foreground;
   }
 }
+
+@layer components {
+  /* Legal pages render bare markup (h2/p/ul/a); preflight strips their styling. */
+  .prose-legal {
+    @apply text-sm leading-relaxed;
+  }
+
+  .prose-legal h2 {
+    @apply mt-8 mb-2 text-base font-semibold tracking-tight;
+  }
+
+  .prose-legal p {
+    @apply text-muted-foreground mb-3;
+  }
+
+  .prose-legal ul {
+    @apply text-muted-foreground mb-3 list-disc space-y-1.5 pl-5;
+  }
+
+  .prose-legal strong {
+    @apply text-foreground font-medium;
+  }
+
+  .prose-legal a {
+    @apply text-foreground underline underline-offset-4;
+  }
+
+  .prose-legal code {
+    @apply bg-muted rounded px-1 py-0.5 text-xs;
+  }
+
+  .prose-legal .uppercase {
+    @apply text-xs tracking-wide;
+  }
+}
