@@ -18,16 +18,6 @@ export default function TermsPage() {
         Last updated: {LAST_UPDATED}
       </p>
 
-      <section className="border-muted-foreground/20 bg-muted/40 mt-6 rounded-lg border p-4 text-sm">
-        <p className="font-medium">In short</p>
-        <p className="text-muted-foreground mt-2">
-          This is a free personal portfolio demo provided as-is, with no
-          warranty, no uptime guarantee, and no support. AI output can be wrong,
-          so do not rely on it. Your data may be deleted at any time. Use it at
-          your own risk.
-        </p>
-      </section>
-
       <h2>1. What this is</h2>
       <p>
         Langchain Chatbot (&ldquo;the Demo&rdquo;) is a non-commercial project

@@ -18,17 +18,6 @@ export default function PrivacyPage() {
         Last updated: {LAST_UPDATED}
       </p>
 
-      <section className="border-muted-foreground/20 bg-muted/40 mt-6 rounded-lg border p-4 text-sm">
-        <p className="font-medium">In short</p>
-        <p className="text-muted-foreground mt-2">
-          This is a personal portfolio demo, not a commercial product. Please do
-          not upload confidential, sensitive, or regulated personal information.
-          Everything you send is stored, and forwarded to the AI provider you
-          select. You can delete your account and all associated data at any
-          time from Settings.
-        </p>
-      </section>
-
       <h2>1. Who is responsible for your data</h2>
       <p>
         This project (&ldquo;the Demo&rdquo;) is operated by an individual

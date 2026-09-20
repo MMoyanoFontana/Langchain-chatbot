@@ -255,8 +255,7 @@ export function AuthPage({ className, defaultMode = "login", ...props }: AuthPag
                 <Link href="/privacy" className="underline underline-offset-4">
                   Privacy Policy
                 </Link>
-                . This is a portfolio demo, so please don&apos;t upload
-                sensitive information.
+                .
               </FieldDescription>
             </FieldGroup>
           </form>
