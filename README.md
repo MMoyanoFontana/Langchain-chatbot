@@ -18,7 +18,7 @@ Multi-provider AI chatbot with **agentic RAG**, per-thread document grounding, p
 
 Try it out: **[https://langchain-chatbot-phi.vercel.app/](https://langchain-chatbot-phi.vercel.app/)**
 
-> **Demo disclaimer.** This is a personal portfolio project, not a commercial service. It is provided as-is with no warranty, uptime guarantee, or support, and stored data may be wiped at any time. AI output can be inaccurate — don't rely on it. Please don't upload confidential or sensitive personal information. See the [Privacy Policy](frontend/app/(legal)/privacy/page.tsx) and [Terms of Use](frontend/app/(legal)/terms/page.tsx) (served at `/privacy` and `/terms`).
+> **Demo disclaimer.** This is a personal portfolio project, not a commercial service. It is provided as-is with no warranty, uptime guarantee, or support, and stored data may be wiped at any time. AI output can be inaccurate, so don't rely on it. Please don't upload confidential or sensitive personal information. See the [Privacy Policy](https://langchain-chatbot-phi.vercel.app/privacy) and [Terms of Use](https://langchain-chatbot-phi.vercel.app/terms).
 
 ## Architecture
 
@@ -179,5 +179,5 @@ Offline RAG eval in [backend/tests/evals/](backend/tests/evals/) — 18 question
 
 ## License
 
-MIT — see [LICENSE](LICENSE). The MIT License covers the source code; use of the
+MIT, see [LICENSE](LICENSE). The MIT License covers the source code; use of the
 hosted demo is additionally governed by the Terms of Use linked above.

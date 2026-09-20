@@ -2,12 +2,12 @@ import type { Metadata } from "next"
 import Link from "next/link"
 
 export const metadata: Metadata = {
-  title: "Privacy Policy — Langchain Chatbot",
+  title: "Privacy Policy | Langchain Chatbot",
   description:
     "How this personal portfolio demo collects, uses, and deletes your data.",
 }
 
-const LAST_UPDATED = "19 September 2026"
+const LAST_UPDATED = "20 September 2026"
 const CONTACT_EMAIL = "mmoyanofontana@gmail.com"
 
 export default function PrivacyPage() {
@@ -23,9 +23,9 @@ export default function PrivacyPage() {
         <p className="text-muted-foreground mt-2">
           This is a personal portfolio demo, not a commercial product. Please do
           not upload confidential, sensitive, or regulated personal information.
-          Everything you send is stored in a database and forwarded to the AI
-          provider you select. You can delete your account and all associated
-          data at any time from Settings.
+          Everything you send is stored, and forwarded to the AI provider you
+          select. You can delete your account and all associated data at any
+          time from Settings.
         </p>
       </section>
 
@@ -42,42 +42,41 @@ export default function PrivacyPage() {
       <p>The Demo stores only what it needs in order to work:</p>
       <ul>
         <li>
-          <strong>Account data</strong> — your username, and optionally a display
-          name, email address, and avatar URL. If you sign in with Google,
+          <strong>Account data</strong>: your username, and optionally a display
+          name, email address, and avatar picture. If you sign in with Google,
           GitHub, or Microsoft, the Demo receives your basic profile and email
-          address from that provider (scopes: <code>openid</code>,{" "}
-          <code>email</code>, <code>profile</code> or equivalent) and stores a
-          provider identifier to link the account.
+          address from that provider, and stores an identifier so the account can
+          be linked on your next sign-in.
         </li>
         <li>
-          <strong>Credentials</strong> — if you register with a password, only a
-          salted hash is stored. The plaintext password is never retained.
+          <strong>Credentials</strong>: if you register with a password, it is
+          stored only in an encrypted form. Your actual password is never
+          retained and cannot be recovered.
         </li>
         <li>
-          <strong>Chat content</strong> — your messages, the model&rsquo;s
-          replies, per-thread system prompts, thread titles, and rolling
-          conversation summaries.
+          <strong>Chat content</strong>: your messages, the assistant&rsquo;s
+          replies, any custom instructions you set for a conversation,
+          conversation titles, and summaries of your conversations.
         </li>
         <li>
-          <strong>Uploaded files</strong> — files you attach are parsed into text
-          chunks, converted to vector embeddings, and stored in a Pinecone index
-          under a namespace scoped to your user and thread. Filenames, media
-          types, sizes, and checksums are stored in the database.
+          <strong>Uploaded files</strong>: files you attach are processed so the
+          assistant can search them, and stored so they remain available to the
+          conversation you attached them to. Basic details about each file, such
+          as its name, type, and size, are stored alongside it.
         </li>
         <li>
-          <strong>Memory</strong> — facts the assistant extracts from your
+          <strong>Memory</strong>: facts the assistant saves from your
           conversations in order to personalise later replies. These are visible
           and individually deletable under Settings &rarr; Memory.
         </li>
         <li>
-          <strong>Provider API keys</strong> — if you supply your own API keys,
-          they are encrypted at rest (Fernet symmetric encryption) before being
-          written to the database, and are decrypted only to make requests on
-          your behalf.
+          <strong>Provider API keys</strong>: if you supply your own API keys,
+          they are encrypted before being stored, and are used only to make
+          requests to that provider on your behalf.
         </li>
         <li>
-          <strong>Technical metadata</strong> — session records, token counts,
-          latency measurements, and timestamps.
+          <strong>Technical metadata</strong>: sign-in session records, basic
+          usage and performance measurements, and timestamps.
         </li>
       </ul>
       <p>
@@ -87,23 +86,23 @@ export default function PrivacyPage() {
 
       <h2>3. Cookies</h2>
       <p>
-        The Demo sets a strictly necessary, <code>HttpOnly</code> session cookie
-        to keep you signed in, and a short-lived nonce cookie during OAuth sign-in
-        to protect against cross-site request forgery. Both are essential to the
-        service, so no consent banner is presented. No advertising or analytics
-        cookies are set.
+        The Demo sets a strictly necessary cookie to keep you signed in, and a
+        short-lived cookie during sign-in with Google, GitHub, or Microsoft to
+        protect that process against abuse. Both are essential to the service, so
+        no consent banner is presented. No advertising or analytics cookies are
+        set.
       </p>
 
       <h2>4. Why it is processed, and on what legal basis</h2>
       <ul>
         <li>
-          <strong>To provide the service</strong> (authenticating you, storing
-          your threads, generating replies) — performance of a contract, or your
+          <strong>To provide the service</strong> (signing you in, storing your
+          conversations, generating replies): performance of a contract, or your
           consent where no contract exists.
         </li>
         <li>
-          <strong>To keep the service secure and available</strong> (session
-          management, rate limiting, abuse prevention) — legitimate interests.
+          <strong>To keep the service secure and available</strong> (managing
+          sign-in sessions, preventing abuse): legitimate interests.
         </li>
       </ul>
 
@@ -118,16 +117,16 @@ export default function PrivacyPage() {
       <p>Other infrastructure providers used by the Demo:</p>
       <ul>
         <li>
-          <strong>Pinecone</strong> — vector storage for document embeddings.
+          <strong>Pinecone</strong>: storage for uploaded document content.
         </li>
         <li>
-          <strong>Vercel</strong> — frontend hosting.
+          <strong>Vercel</strong>: application hosting.
         </li>
         <li>
-          <strong>Render / Railway</strong> — backend and PostgreSQL hosting.
+          <strong>Render / Railway</strong>: application and database hosting.
         </li>
         <li>
-          <strong>LangSmith</strong> — optional request tracing, when enabled.
+          <strong>LangSmith</strong>: optional diagnostics, when enabled.
         </li>
       </ul>
       <p>
@@ -148,10 +147,11 @@ export default function PrivacyPage() {
       <h2>7. Retention</h2>
       <p>
         Data is kept until you delete it or until the Demo is shut down. Deleting
-        a thread removes its messages and the associated vectors. Deleting your
-        account removes your profile, all threads and messages, stored memories,
-        encrypted API keys, and indexed documents. Because this is a demo, the
-        entire dataset may be wiped at any time without notice.
+        a conversation removes its messages and anything stored from the files you
+        attached to it. Deleting your account removes your profile, all
+        conversations and messages, saved memories, stored API keys, and uploaded
+        documents. Because this is a demo, all stored data may be removed at any
+        time without notice.
       </p>
 
       <h2>8. Your rights</h2>
@@ -163,13 +163,13 @@ export default function PrivacyPage() {
       </p>
       <ul>
         <li>
-          <strong>Access and portability</strong> — export any thread as Markdown
-          or JSON from the thread menu.
+          <strong>Access and portability</strong>: you can export any
+          conversation from its menu, in a choice of common file formats.
         </li>
         <li>
-          <strong>Erasure</strong> — delete individual messages, threads,
-          documents, and memories, or delete your entire account under Settings
-          &rarr; Profile.
+          <strong>Erasure</strong>: you can delete individual messages,
+          conversations, documents, and memories, or delete your entire account
+          under Settings &rarr; Profile.
         </li>
       </ul>
       <p>
@@ -180,11 +180,11 @@ export default function PrivacyPage() {
 
       <h2>9. Security</h2>
       <p>
-        Passwords are hashed, provider API keys are encrypted at rest, session
-        cookies are <code>HttpOnly</code>, and access to threads and documents is
-        scoped per user. That said, no system is perfectly secure, and this Demo
-        has not undergone a third-party security audit. Do not store anything you
-        could not afford to have exposed.
+        Passwords and provider API keys are stored in an encrypted form, sign-in
+        sessions are protected, and your conversations and documents are
+        accessible only to your own account. That said, no system is perfectly
+        secure, and this Demo has not undergone a third-party security audit. Do
+        not store anything you could not afford to have exposed.
       </p>
 
       <h2>10. Children</h2>

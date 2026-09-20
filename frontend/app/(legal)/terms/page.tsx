@@ -2,12 +2,12 @@ import type { Metadata } from "next"
 import Link from "next/link"
 
 export const metadata: Metadata = {
-  title: "Terms of Use — Langchain Chatbot",
+  title: "Terms of Use | Langchain Chatbot",
   description:
     "The terms that apply to this personal portfolio demo, including disclaimers and limits of liability.",
 }
 
-const LAST_UPDATED = "19 September 2026"
+const LAST_UPDATED = "20 September 2026"
 const CONTACT_EMAIL = "mmoyanofontana@gmail.com"
 
 export default function TermsPage() {
@@ -22,9 +22,9 @@ export default function TermsPage() {
         <p className="font-medium">In short</p>
         <p className="text-muted-foreground mt-2">
           This is a free personal portfolio demo provided as-is, with no
-          warranty, no uptime guarantee, and no support. AI output can be wrong &mdash;
-          do not rely on it. Your data may be deleted at any time. Use it at your
-          own risk.
+          warranty, no uptime guarantee, and no support. AI output can be wrong,
+          so do not rely on it. Your data may be deleted at any time. Use it at
+          your own risk.
         </p>
       </section>
 
@@ -69,7 +69,7 @@ export default function TermsPage() {
         </li>
         <li>
           attack, overload, probe, or reverse-engineer the service or its
-          infrastructure, or circumvent rate limits and access controls;
+          infrastructure, or circumvent usage limits and access controls;
         </li>
         <li>
           use the Demo for automated bulk processing or resell access to it.
@@ -96,20 +96,20 @@ export default function TermsPage() {
       <h2>6. Third-party AI providers and API keys</h2>
       <p>
         The Demo routes your prompts to whichever provider you choose (OpenAI,
-        Anthropic, Google, Groq, or your own Ollama instance). Your use of those
-        models is also governed by that provider&rsquo;s own terms, and their
-        behaviour, availability, and pricing are outside this project&rsquo;s
-        control.
+        Anthropic, Google, Groq, or a local model provider you configure). Your
+        use of those models is also governed by that provider&rsquo;s own terms,
+        and their behaviour, availability, and pricing are outside this
+        project&rsquo;s control.
       </p>
       <p>
         If you supply your own API keys, you remain responsible for all charges
-        your provider bills to them. Keys are encrypted at rest, but you supply
-        them at your own risk, and you should use restricted keys with spending
-        limits. No reimbursement is offered for any usage, overage, or
+        your provider bills to them. Keys are stored in an encrypted form, but
+        you supply them at your own risk, and you should use restricted keys with
+        spending limits. No reimbursement is offered for any usage, overage, or
         compromise.
       </p>
 
-      <h2>7. AI output &mdash; no reliance</h2>
+      <h2>7. AI output and no reliance</h2>
       <p>
         Language models produce output that can be inaccurate, biased,
         incomplete, outdated, or entirely fabricated, including fabricated
@@ -130,7 +130,7 @@ export default function TermsPage() {
         The Demo may be slow, broken, interrupted, changed, or discontinued at
         any time without notice. Stored data may be wiped during maintenance,
         migration, or shutdown. Keep your own copy of anything you want to
-        keep &mdash; threads can be exported as Markdown or JSON.
+        keep. Conversations can be exported from the app.
       </p>
 
       <h2>9. Disclaimer of warranties</h2>
@@ -148,7 +148,7 @@ export default function TermsPage() {
         not be liable for any indirect, incidental, special, consequential, or
         punitive damages, or for any loss of data, profits, revenue, goodwill, or
         business, arising out of or in connection with your use of or inability
-        to use the Demo &mdash; including any reliance on AI-generated output or any
+        to use the Demo, including any reliance on AI-generated output or any
         charges incurred on your own provider API keys.
       </p>
       <p className="uppercase">
